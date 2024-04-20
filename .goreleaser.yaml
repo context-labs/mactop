@@ -42,7 +42,7 @@ brews:
     install: |
       bin.install "{{ .ProjectName }}"
     repository:
-      owner: "metaspartan"
+      owner: "context-labs"
       name: "goasitop"
 
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
