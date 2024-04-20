@@ -1,0 +1,46 @@
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    binary: "{{ .ProjectName }}"
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - "{{ .ProjectName }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+brews:
+  - name: "{{ .ProjectName }}"
+    homepage: "https://github.com/context-labs/goasitop"
+    description: "Apple Silicon Monitor Top written in Go Lang"
+    url_template: "https://github.com/context-labs/goasitop/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    caveats: "goasitop requires macOS 12+, and runs only on Apple Silicon."
+    install: |
+      bin.install "{{ .ProjectName }}"
+
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
