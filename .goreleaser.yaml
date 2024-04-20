@@ -18,7 +18,7 @@ archives:
     files:
       - LICENSE
       - README.md
-      - "{{ .ProjectName }}"
+      - "dist/{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}/{{ .ProjectName }}"
 
 checksum:
   name_template: 'checksums.txt'
