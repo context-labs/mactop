@@ -41,6 +41,9 @@ brews:
     caveats: "goasitop requires macOS 12+, and runs only on Apple Silicon."
     install: |
       bin.install "{{ .ProjectName }}"
+    repository:
+      owner: "metaspartan"
+      name: "goasitop"
 
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj
