@@ -17,6 +17,20 @@
 
 - Cannot exit cleanly with Ctrl + C etc. must kill terminal process for goasitop exit.
 
+## Install via Homebrew
+
+```bash
+brew tap context-labs/goasitop https://github.com/context-labs/goasitop
+```
+
+```bash
+brew install goasitop
+```
+
+```bash
+sudo goasitop
+```
+
 ## Installation
 
 To install `goasitop`, follow these steps:
