@@ -16,6 +16,7 @@
 ## Known Bugs
 
 - Cannot exit cleanly with Ctrl + C etc. must kill terminal process for goasitop exit.
+- Improvements to be made to the UI, data polling rate, etc. WIP
 
 ## Install via Homebrew
 
@@ -88,4 +89,6 @@ Project Link: [https://github.com/context-labs/goasitop](https://github.com/cont
 
 - [termui](https://github.com/gizak/termui) for the terminal UI framework.
 - [gopsutil](https://github.com/shirou/gopsutil) for system memory monitoring.
+- [asitop](https://github.com/tlkh/asitop) for the original inspiration!
 ```
+
