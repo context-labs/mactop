@@ -5,12 +5,12 @@
 class Goasitop < Formula
   desc "Apple Silicon Monitor Top written in Go Lang"
   homepage "https://github.com/context-labs/goasitop"
-  version "0.0.6"
+  version "0.0.7"
   depends_on :macos
 
   if Hardware::CPU.arm?
-    url "https://github.com/context-labs/goasitop/releases/download/v0.0.6/goasitop_0.0.6_darwin_arm64.tar.gz"
-    sha256 "dbecbf3e695f96138ebc9c84f4cb42b40308254901942e0caafc5dbe05f298c4"
+    url "https://github.com/context-labs/goasitop/releases/download/v0.0.7/goasitop_0.0.7_darwin_arm64.tar.gz"
+    sha256 "77913e6d188f8566c670b4953716d032ee6ffd0109d4d2e577388b59b407f76f"
 
     def install
       bin.install "goasitop"
