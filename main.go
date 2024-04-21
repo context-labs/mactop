@@ -11,10 +11,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
@@ -45,10 +45,27 @@ type CPUMetrics struct {
 	P3ClusterActive  int
 	P3ClusterFreqMHz int
 }
+type NetDiskMetrics struct {
+	OutPacketsPerSec float64
+	OutBytesPerSec   float64
+	InPacketsPerSec  float64
+	InBytesPerSec    float64
+
+	ReadOpsPerSec     float64
+	WriteOpsPerSec    float64
+	ReadKBytesPerSec  float64
+	WriteKBytesPerSec float64
+}
 
 type GPUMetrics struct {
 	FreqMHz int
 	Active  float64
+}
+
+type ProcessMetrics struct {
+	ID       int
+	Name     string
+	CPUUsage float64
 }
 
 type MemoryMetrics struct {
@@ -60,26 +77,20 @@ type MemoryMetrics struct {
 }
 
 var (
-	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge *w.Gauge
-	TotalPowerChart                          *w.Sparkline
-	GroupPowerChart                          *w.SparklineGroup
-	memoryGauge                              *w.Gauge
-	modelText, PowerChart                    *w.Paragraph
-	grid                                     *ui.Grid
+	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge        *w.Gauge
+	TotalPowerChart                                 *w.Plot
+	memoryGauge                                     *w.Gauge
+	modelText, PowerChart, NetworkInfo, ProcessInfo *w.Paragraph
+	grid                                            *ui.Grid
 
 	stderrLogger = log.New(os.Stderr, "", 0)
-
-	totalPowerData []float64 = make([]float64, 0, 50)
-
-	cpuMetricsChan = make(chan CPUMetrics, 1)
-	gpuMetricsChan = make(chan GPUMetrics, 1)
 )
 
 func setupUI() {
 
 	appleSiliconModel := getSOCInfo()
 	modelText = w.NewParagraph()
-	modelText.Title = "Apple Silicon Model Info"
+	modelText.Title = "Apple Silicon"
 
 	// Accessing map values with type assertion
 	modelName, ok := appleSiliconModel["name"].(string)
@@ -99,9 +110,19 @@ func setupUI() {
 		gpuCoreCount = "?"
 	}
 
-	modelText.Text = fmt.Sprintf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
-
-	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
+	modelText.Text = fmt.Sprintf("%s\nTotal Cores: %d\nE-Cores: %d\nP-Cores: %d\nGPU Cores: %s",
+		modelName,
+		eCoreCount+pCoreCount,
+		eCoreCount,
+		pCoreCount,
+		gpuCoreCount,
+	)
+	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
+		modelName,
+		eCoreCount,
+		pCoreCount,
+		gpuCoreCount,
+	)
 
 	cpu1Gauge = w.NewGauge()
 	cpu1Gauge.Title = "E-CPU Usage"
@@ -126,12 +147,18 @@ func setupUI() {
 	PowerChart = w.NewParagraph()
 	PowerChart.Title = "Power Usage"
 
-	TotalPowerChart = w.NewSparkline()
-	TotalPowerChart.LineColor = ui.ColorCyan
+	NetworkInfo = w.NewParagraph()
+	NetworkInfo.Title = "Network & Disk Info"
 
-	GroupPowerChart = w.NewSparklineGroup(TotalPowerChart)
-	GroupPowerChart.Title = "Total Power Usage"
-	GroupPowerChart.SetRect(0, 0, 20, 10)
+	ProcessInfo = w.NewParagraph()
+	ProcessInfo.Title = "Process Info"
+
+	TotalPowerChart = w.NewPlot()
+	TotalPowerChart.Title = "Total Power Usage (W)"
+	TotalPowerChart.Data = make([][]float64, 1)
+	TotalPowerChart.Data[0] = []float64{1, 2, 3, 4, 5}
+	TotalPowerChart.AxesColor = ui.ColorGreen
+	TotalPowerChart.LineColors = []ui.Color{ui.ColorCyan}
 
 	memoryGauge = w.NewGauge()
 	memoryGauge.Title = "Memory Usage"
@@ -143,20 +170,22 @@ func setupUI() {
 func setupGrid() {
 	grid = ui.NewGrid()
 
+	// Define the rows and columns
 	grid.Set(
-		ui.NewRow(1.0/2,
-			ui.NewCol(1.0/2, cpu1Gauge),
-			ui.NewCol(1.0/2, cpu2Gauge),
+		ui.NewRow(1.0/2, // This row now takes half the height of the grid
+			ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), // ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
+			ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)), // ProcessInfo spans this entire column
 		),
 		ui.NewRow(1.0/4,
 			ui.NewCol(1.0/4, gpuGauge),
 			ui.NewCol(1.0/4, aneGauge),
 			ui.NewCol(1.0/4, PowerChart),
-			ui.NewCol(1.0/4, GroupPowerChart), // TODO: fix this
+			ui.NewCol(1.0/4, TotalPowerChart),
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/2, modelText),
-			ui.NewCol(1.0/2, memoryGauge),
+			ui.NewCol(3.0/6, memoryGauge),
+			ui.NewCol(1.0/6, modelText),
+			ui.NewCol(2.0/6, NetworkInfo),
 		),
 	)
 }
@@ -189,14 +218,62 @@ func main() {
 
 	ui.Render(grid)
 
+	cpuMetricsChan := make(chan CPUMetrics)
+	gpuMetricsChan := make(chan GPUMetrics)
+	netdiskMetricsChan := make(chan NetDiskMetrics)
+	processMetricsChan := make(chan []ProcessMetrics)
+
 	done := make(chan struct{})
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	go collectMetrics(done)
+	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan, processMetricsChan)
 
-	eventLoop(done)
+	go func() {
+		for {
+			select {
+			case cpuMetrics := <-cpuMetricsChan:
+				updateCPUUI(cpuMetrics)
+				updateTotalPowerChart(cpuMetrics.PackageW)
+				ui.Render(grid)
+			case gpuMetrics := <-gpuMetricsChan:
+				updateGPUUI(gpuMetrics)
+				ui.Render(grid)
+			case netdiskMetrics := <-netdiskMetricsChan:
+				updateNetDiskUI(netdiskMetrics)
+				ui.Render(grid)
+			case processMetrics := <-processMetricsChan:
+				updateProcessUI(processMetrics)
+				ui.Render(grid)
+			case <-quit:
+				close(done)
+				ui.Close()
+				os.Exit(0)
+				return
+			}
+		}
+	}()
 
-	ui.Close()
-	os.Exit(0)
+	uiEvents := ui.PollEvents()
+	for {
+		select {
+		case e := <-uiEvents:
+			switch e.ID {
+			case "q", "<C-c>": // "q" or Ctrl+C to quit
+				close(done)
+				ui.Close()
+				os.Exit(0)
+				return
+			case "r":
+				// refresh ui data
+				ui.Render(grid)
+			}
+		case <-done:
+			ui.Close()
+			os.Exit(0)
+			return
+		}
+	}
 }
 
 func setupLogfile() (*os.File, error) {
@@ -218,73 +295,12 @@ func setupLogfile() (*os.File, error) {
 	return logfile, nil
 }
 
-func eventLoop(done chan struct{}) {
-	updateInterval := 2000 * time.Millisecond
-	drawTicker := time.NewTicker(updateInterval)
-	defer drawTicker.Stop()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
-	// collectMetrics()
-	var lastCpuMetrics CPUMetrics
-	var lastGpuMetrics GPUMetrics
-	var cpuUpdated, gpuUpdated bool
-
-	for {
-		select {
-		case newCpuMetrics := <-cpuMetricsChan:
-			lastCpuMetrics = newCpuMetrics
-			cpuUpdated = true
-			if gpuUpdated {
-				updateUI(lastCpuMetrics, lastGpuMetrics)
-				cpuUpdated = false
-				gpuUpdated = false
-			}
-		case newGpuMetrics := <-gpuMetricsChan:
-			lastGpuMetrics = newGpuMetrics
-			gpuUpdated = true
-			if cpuUpdated {
-				updateUI(lastCpuMetrics, lastGpuMetrics)
-				cpuUpdated = false
-				gpuUpdated = false
-			}
-		case <-drawTicker.C:
-			collectMetrics(done)
-			ui.Render(grid) // Regularly render the grid
-		case e := <-ui.PollEvents():
-			if e.ID == "q" || e.ID == "<C-c>" {
-				close(done)
-				ui.Close()
-				os.Exit(0)
-				return
-			}
-			switch e.ID {
-			case "q", "<C-c>":
-				os.Exit(0)
-				close(done)
-				ui.Close()
-				return
-			case "<Resize>":
-				payload := e.Payload.(ui.Resize)
-				grid.SetRect(0, 0, payload.Width, payload.Height)
-				ui.Clear()
-				ui.Render(grid)
-			}
-		case <-sigCh:
-			close(done) // Signal to terminate collectMetrics
-			ui.Close()
-			os.Exit(0)
-			return
-
-		}
-	}
-}
-
-func collectMetrics(done chan struct{}) {
+func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetricsChan chan GPUMetrics, netdiskMetricsChan chan NetDiskMetrics, processMetricsChan chan []ProcessMetrics) {
 	var cpuMetrics CPUMetrics
 	var gpuMetrics GPUMetrics
-	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal", "--show-process-gpu", "--show-process-energy", "--show-initial-usage")
+	var netdiskMetrics NetDiskMetrics
+	var processMetrics []ProcessMetrics
+	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-process-gpu", "--show-process-energy", "--show-initial-usage", "--show-process-netstats", "-i 1000")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stderrLogger.Fatalf("failed to get stdout pipe: %v", err)
@@ -307,9 +323,14 @@ func collectMetrics(done chan struct{}) {
 					line := scanner.Text()
 					cpuMetrics = parseCPUMetrics(line, cpuMetrics)
 					gpuMetrics = parseGPUMetrics(line, gpuMetrics)
+					netdiskMetrics = parseActivityMetrics(line, netdiskMetrics)
+					processMetrics = parseProcessMetrics(line, processMetrics)
 
-					updateUI(cpuMetrics, gpuMetrics) // removing this causes UI to not update at all
-					// Process line here
+					cpumetricsChan <- cpuMetrics
+					gpumetricsChan <- gpuMetrics
+					netdiskMetricsChan <- netdiskMetrics
+					processMetricsChan <- processMetrics
+
 				} else {
 					if err := scanner.Err(); err != nil {
 						stderrLogger.Printf("error during scan: %v", err)
@@ -325,28 +346,37 @@ func collectMetrics(done chan struct{}) {
 	}
 }
 
-func updateUI(cpuMetrics CPUMetrics, gpuMetrics GPUMetrics) {
+func updateTotalPowerChart(newPowerValue float64) {
+	stderrLogger.Printf("Rendering TotalPowerChart with data: %v\n", TotalPowerChart.Data)
+	if len(TotalPowerChart.Data[0]) == 0 {
+		TotalPowerChart.Data[0] = append(TotalPowerChart.Data[0], 0) // Ensure there's at least one data point
+	}
+
+	TotalPowerChart.Data[0] = append(TotalPowerChart.Data[0], newPowerValue)
+
+	if len(TotalPowerChart.Data[0]) > 250 {
+		TotalPowerChart.Data[0] = TotalPowerChart.Data[0][1:]
+	}
+
+	if len(TotalPowerChart.Data[0]) > 0 {
+		ui.Render(TotalPowerChart)
+	} else {
+		log.Println("No data to render for TotalPowerChart")
+	}
+}
+
+func updateCPUUI(cpuMetrics CPUMetrics) {
 	cpu1Gauge.Title = fmt.Sprintf("E-CPU Usage: %d%% @ %d MHz", cpuMetrics.EClusterActive, cpuMetrics.EClusterFreqMHz)
 	cpu1Gauge.Percent = cpuMetrics.EClusterActive
 	cpu2Gauge.Title = fmt.Sprintf("P-CPU Usage: %d%% @ %d MHz", cpuMetrics.PClusterActive, cpuMetrics.PClusterFreqMHz)
 	cpu2Gauge.Percent = cpuMetrics.PClusterActive
-	gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz (%.1f W)", int(gpuMetrics.Active), gpuMetrics.FreqMHz, cpuMetrics.GPUW)
-	gpuGauge.Percent = int(gpuMetrics.Active)
 	aneUtil := int(cpuMetrics.ANEW * 100 / 8.0)
 	aneGauge.Title = fmt.Sprintf("ANE Usage: %d%% @ %.1f W", aneUtil, cpuMetrics.ANEW)
 	aneGauge.Percent = aneUtil
 
-	PowerChart.Title = fmt.Sprintf("%.1f W CPU - %.1f W GPU - %.1f W Total", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.PackageW)
-	PowerChart.Text = fmt.Sprintf("\n\nCPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
-
-	totalPowerData = append(totalPowerData, cpuMetrics.PackageW)
-	// Ensure the slice does not grow indefinitely
-	if len(totalPowerData) > 50 { // Limit to last 50 readings
-		totalPowerData = totalPowerData[1:]
-	}
-
-	TotalPowerChart.Data = totalPowerData
-	// modelText.Text += fmt.Sprintf("\nCPU Power: %.1f W - GPU Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.PackageW)
+	TotalPowerChart.Title = fmt.Sprintf("%.1f W Total Power Usage", cpuMetrics.PackageW)
+	PowerChart.Title = fmt.Sprintf("%.1f W CPU - %.1f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
+	PowerChart.Text = fmt.Sprintf("\nCPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
 
 	memoryMetrics := getMemoryMetrics()
 
@@ -355,6 +385,109 @@ func updateUI(cpuMetrics CPUMetrics, gpuMetrics GPUMetrics) {
 
 	ui.Render(grid)
 	ui.Render(cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge, memoryGauge, modelText, PowerChart)
+}
+
+func updateGPUUI(gpuMetrics GPUMetrics) {
+	gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
+	gpuGauge.Percent = int(gpuMetrics.Active)
+}
+
+func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
+	NetworkInfo.Text = fmt.Sprintf("Out: %.1f packets/s, %.1f bytes/s\nIn: %.1f packets/s, %.1f bytes/s\nRead: %.1f ops/s, %.1f KBytes/s\nWrite: %.1f ops/s, %.1f KBytes/s", netdiskMetrics.OutPacketsPerSec, netdiskMetrics.OutBytesPerSec, netdiskMetrics.InPacketsPerSec, netdiskMetrics.InBytesPerSec, netdiskMetrics.ReadOpsPerSec, netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteOpsPerSec, netdiskMetrics.WriteKBytesPerSec)
+}
+
+func updateProcessUI(processMetrics []ProcessMetrics) {
+	// Assuming `ProcessInfo` is a Paragraph widget from termui
+	// Clear previous content
+	ProcessInfo.Text = ""
+
+	// Sort processMetrics by CPU ms/s in descending order
+	sort.Slice(processMetrics, func(i, j int) bool {
+		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
+	})
+
+	// Limit the number of entries to 15
+	maxEntries := 15
+	if len(processMetrics) > maxEntries {
+		processMetrics = processMetrics[:maxEntries]
+	}
+
+	// Create a string with each process on a new line
+	for _, pm := range processMetrics {
+		ProcessInfo.Text += fmt.Sprintf("%d - %s: %.2f ms/s\n", pm.ID, pm.Name, pm.CPUUsage)
+	}
+
+	// Render the updated ProcessInfo
+	ui.Render(ProcessInfo)
+}
+
+func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetrics) []ProcessMetrics {
+	lines := strings.Split(powermetricsOutput, "\n")
+	dataRegex := regexp.MustCompile(`(?m)^\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+)\s+\d+\.\d+\s+`)
+	seen := make(map[int]bool) // Map to track seen process IDs
+	for _, line := range lines {
+		matches := dataRegex.FindStringSubmatch(line)
+		if len(matches) > 3 {
+			processName := matches[1]
+			if processName == "goasitop" || processName == "main" || processName == "powermetrics" {
+				continue // Skip this process
+			}
+			id, _ := strconv.Atoi(matches[2])
+			if !seen[id] {
+				seen[id] = true
+				cpuMsPerS, _ := strconv.ParseFloat(matches[3], 64)
+				processMetrics = append(processMetrics, ProcessMetrics{
+					Name:     matches[1],
+					ID:       id,
+					CPUUsage: cpuMsPerS,
+				})
+			}
+		}
+	}
+
+	// Sort by CPU ms/s in descending order
+	sort.Slice(processMetrics, func(i, j int) bool {
+		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
+	})
+
+	return processMetrics
+}
+
+func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetrics) NetDiskMetrics {
+
+	outRegex := regexp.MustCompile(`out:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
+	inRegex := regexp.MustCompile(`in:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
+
+	outMatches := outRegex.FindStringSubmatch(powermetricsOutput)
+	inMatches := inRegex.FindStringSubmatch(powermetricsOutput)
+
+	if len(outMatches) == 3 {
+		netdiskMetrics.OutPacketsPerSec, _ = strconv.ParseFloat(outMatches[1], 64)
+		netdiskMetrics.OutBytesPerSec, _ = strconv.ParseFloat(outMatches[2], 64)
+	}
+
+	if len(inMatches) == 3 {
+		netdiskMetrics.InPacketsPerSec, _ = strconv.ParseFloat(inMatches[1], 64)
+		netdiskMetrics.InBytesPerSec, _ = strconv.ParseFloat(inMatches[2], 64)
+	}
+
+	readRegex := regexp.MustCompile(`read:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
+	writeRegex := regexp.MustCompile(`write:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
+
+	readMatches := readRegex.FindStringSubmatch(powermetricsOutput)
+	writeMatches := writeRegex.FindStringSubmatch(powermetricsOutput)
+
+	if len(readMatches) == 3 {
+		netdiskMetrics.ReadOpsPerSec, _ = strconv.ParseFloat(readMatches[1], 64)
+		netdiskMetrics.ReadKBytesPerSec, _ = strconv.ParseFloat(readMatches[2], 64)
+	}
+
+	if len(writeMatches) == 3 {
+		netdiskMetrics.WriteOpsPerSec, _ = strconv.ParseFloat(writeMatches[1], 64)
+		netdiskMetrics.WriteKBytesPerSec, _ = strconv.ParseFloat(writeMatches[2], 64)
+	}
+
+	return netdiskMetrics
 }
 
 func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetrics {
@@ -447,7 +580,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	cpuMetrics.PCores = pCores
 
 	// Additional calculations for M1 Ultra or other logic as needed
-	// M1 Ultra calculation example:
 	if cpuMetrics.E0ClusterActive != 0 && cpuMetrics.E1ClusterActive != 0 {
 		cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
 		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
@@ -464,8 +596,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
 		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
 	}
-
-	// stderrLogger.Printf("CPU Metrics: %+v\n", cpuMetrics)
 
 	return cpuMetrics
 }
@@ -488,7 +618,6 @@ func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetric
 		}
 	}
 
-	// stderrLogger.Printf("GPU Metrics: %+v\n", gpuMetrics)
 	return gpuMetrics
 }
 
@@ -613,7 +742,6 @@ func getCPUInfo() map[string]string {
 			}
 		}
 	}
-
 	return cpuInfoDict
 }
 
@@ -636,7 +764,6 @@ func getCoreCounts() map[string]int {
 			}
 		}
 	}
-
 	return coresInfoDict
 }
 
@@ -645,10 +772,7 @@ func getGPUCores() string {
 	if err != nil {
 		stderrLogger.Fatalf("failed to execute system_profiler command: %v", err)
 	}
-
-	// Parse the output looking for the line containing "Total Number of Cores"
 	output := string(cmd)
-
 	stderrLogger.Printf("Output: %s\n", output)
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
@@ -661,6 +785,5 @@ func getGPUCores() string {
 			break
 		}
 	}
-
 	return "?"
 }
