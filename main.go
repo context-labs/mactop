@@ -503,6 +503,9 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
 
+	const numReadings = 5
+	var pClusterReadings []int
+	var pClusterFreqReadings []int
 	for _, line := range lines {
 		residencyMatches := residencyRe.FindStringSubmatch(line)
 		frequencyMatches := frequencyRe.FindStringSubmatch(line)
@@ -510,6 +513,20 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		if residencyMatches != nil {
 			cluster := residencyMatches[1]
 			percent, _ := strconv.ParseFloat(residencyMatches[2], 64)
+			switch cluster {
+			case "E0-Cluster":
+				cpuMetrics.E0ClusterActive = int(percent)
+			case "E1-Cluster":
+				cpuMetrics.E1ClusterActive = int(percent)
+			case "P0-Cluster":
+				cpuMetrics.P0ClusterActive = int(percent)
+			case "P1-Cluster":
+				cpuMetrics.P1ClusterActive = int(percent)
+			case "P2-Cluster":
+				cpuMetrics.P2ClusterActive = int(percent)
+			case "P3-Cluster":
+				cpuMetrics.P3ClusterActive = int(percent)
+			}
 			if strings.HasPrefix(cluster, "E") {
 				eClusterActiveTotal += int(percent)
 				eClusterCount++
@@ -522,12 +539,31 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		if frequencyMatches != nil {
 			cluster := frequencyMatches[1]
 			freqMHz, _ := strconv.Atoi(frequencyMatches[2])
+			switch cluster {
+			case "E0-Cluster":
+				cpuMetrics.E0ClusterFreqMHz = freqMHz
+			case "E1-Cluster":
+				cpuMetrics.E1ClusterFreqMHz = freqMHz
+			case "P0-Cluster":
+				cpuMetrics.P0ClusterFreqMHz = freqMHz
+			case "P1-Cluster":
+				cpuMetrics.P1ClusterFreqMHz = freqMHz
+			case "P2-Cluster":
+				cpuMetrics.P2ClusterFreqMHz = freqMHz
+			case "P3-Cluster":
+				cpuMetrics.P3ClusterFreqMHz = freqMHz
+			}
 			if strings.HasPrefix(cluster, "E") {
 				eClusterFreqTotal += int(freqMHz)
 				cpuMetrics.EClusterFreqMHz = eClusterFreqTotal
 			} else if strings.HasPrefix(cluster, "P") {
 				pClusterFreqTotal += int(freqMHz)
 				cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
+				pClusterFreqReadings = append(pClusterFreqReadings, freqMHz)
+				if len(pClusterFreqReadings) > numReadings {
+					pClusterFreqReadings = pClusterFreqReadings[1:] // Remove the oldest reading
+				}
+				cpuMetrics.PClusterFreqMHz = average(pClusterFreqReadings)
 			}
 		}
 
@@ -571,15 +607,28 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	cpuMetrics.ECores = eCores
 	cpuMetrics.PCores = pCores
 
+	// Calculate average P-Cluster Active using a moving average
+	currentPActive := (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+	pClusterReadings = append(pClusterReadings, currentPActive)
+	if len(pClusterReadings) > numReadings {
+		pClusterReadings = pClusterReadings[1:] // Remove the oldest reading
+	}
+	cpuMetrics.PClusterActive = average(pClusterReadings)
+
 	// Calculate average active residency and frequency for E and P clusters
 	if eClusterCount > 0 {
 		cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
 	}
-	if pClusterCount > 0 {
-		cpuMetrics.PClusterActive = pClusterActiveTotal / pClusterCount
-	}
 
 	return cpuMetrics
+}
+
+func average(nums []int) int {
+	sum := 0
+	for _, num := range nums {
+		sum += num
+	}
+	return sum / len(nums)
 }
 
 func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetrics {
