@@ -503,9 +503,9 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
 
-	const numReadings = 5
-	var pClusterReadings []int
-	var pClusterFreqReadings []int
+	// const numReadings = 5
+	// var pClusterReadings []int
+	// var pClusterFreqReadings []int
 	for _, line := range lines {
 		residencyMatches := residencyRe.FindStringSubmatch(line)
 		frequencyMatches := frequencyRe.FindStringSubmatch(line)
@@ -533,6 +533,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 			} else if strings.HasPrefix(cluster, "P") {
 				pClusterActiveTotal += int(percent)
 				pClusterCount++
+				cpuMetrics.PClusterActive = pClusterActiveTotal / pClusterCount
 			}
 		}
 
@@ -559,11 +560,11 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 			} else if strings.HasPrefix(cluster, "P") {
 				pClusterFreqTotal += int(freqMHz)
 				cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
-				pClusterFreqReadings = append(pClusterFreqReadings, freqMHz)
-				if len(pClusterFreqReadings) > numReadings {
-					pClusterFreqReadings = pClusterFreqReadings[1:] // Remove the oldest reading
-				}
-				cpuMetrics.PClusterFreqMHz = average(pClusterFreqReadings)
+				// pClusterFreqReadings = append(pClusterFreqReadings, freqMHz)
+				// if len(pClusterFreqReadings) > numReadings {
+				// 	pClusterFreqReadings = pClusterFreqReadings[1:] // Remove the oldest reading
+				// }
+				// cpuMetrics.PClusterFreqMHz = average(pClusterFreqReadings)
 			}
 		}
 
@@ -607,13 +608,29 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	cpuMetrics.ECores = eCores
 	cpuMetrics.PCores = pCores
 
-	// Calculate average P-Cluster Active using a moving average
-	currentPActive := (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-	pClusterReadings = append(pClusterReadings, currentPActive)
-	if len(pClusterReadings) > numReadings {
-		pClusterReadings = pClusterReadings[1:] // Remove the oldest reading
+	if cpuMetrics.E1ClusterActive != 0 {
+		// M1 Ultra
+		cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
+		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
 	}
-	cpuMetrics.PClusterActive = average(pClusterReadings)
+
+	if cpuMetrics.P3ClusterActive != 0 {
+		// M1 Ultra
+		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+		freqs := []int{cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz}
+		cpuMetrics.PClusterFreqMHz = maxInt(freqs)
+	} else {
+		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
+		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+	}
+
+	// // Calculate average P-Cluster Active using a moving average
+	// currentPActive := (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+	// pClusterReadings = append(pClusterReadings, currentPActive)
+	// if len(pClusterReadings) > numReadings {
+	// 	pClusterReadings = pClusterReadings[1:] // Remove the oldest reading
+	// }
+	// cpuMetrics.PClusterActive = average(pClusterReadings)
 
 	// Calculate average active residency and frequency for E and P clusters
 	if eClusterCount > 0 {
@@ -629,6 +646,26 @@ func average(nums []int) int {
 		sum += num
 	}
 	return sum / len(nums)
+}
+
+func max(nums ...int) int {
+	maxVal := nums[0]
+	for _, num := range nums[1:] {
+		if num > maxVal {
+			maxVal = num
+		}
+	}
+	return maxVal
+}
+
+func maxInt(nums []int) int {
+	max := nums[0]
+	for _, num := range nums {
+		if num > max {
+			max = num
+		}
+	}
+	return max
 }
 
 func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetrics {
