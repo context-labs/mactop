@@ -347,7 +347,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 }
 
 func updateTotalPowerChart(newPowerValue float64) {
-	stderrLogger.Printf("Rendering TotalPowerChart with data: %v\n", TotalPowerChart.Data)
+	// stderrLogger.Printf("Rendering TotalPowerChart with data: %v\n", TotalPowerChart.Data)
 	if len(TotalPowerChart.Data[0]) == 0 {
 		TotalPowerChart.Data[0] = append(TotalPowerChart.Data[0], 0) // Ensure there's at least one data point
 	}
@@ -494,6 +494,12 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	lines := strings.Split(powermetricsOutput, "\n")
 	eCores := []int{}
 	pCores := []int{}
+	eClusterActiveTotal := 0
+	eClusterCount := 0
+	pClusterActiveTotal := 0
+	pClusterCount := 0
+	eClusterFreqTotal := 0
+	pClusterFreqTotal := 0
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
 
@@ -504,38 +510,24 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		if residencyMatches != nil {
 			cluster := residencyMatches[1]
 			percent, _ := strconv.ParseFloat(residencyMatches[2], 64)
-			switch cluster {
-			case "E0-Cluster":
-				cpuMetrics.E0ClusterActive = int(percent)
-			case "E1-Cluster":
-				cpuMetrics.E1ClusterActive = int(percent)
-			case "P0-Cluster":
-				cpuMetrics.P0ClusterActive = int(percent)
-			case "P1-Cluster":
-				cpuMetrics.P1ClusterActive = int(percent)
-			case "P2-Cluster":
-				cpuMetrics.P2ClusterActive = int(percent)
-			case "P3-Cluster":
-				cpuMetrics.P3ClusterActive = int(percent)
+			if strings.HasPrefix(cluster, "E") {
+				eClusterActiveTotal += int(percent)
+				eClusterCount++
+			} else if strings.HasPrefix(cluster, "P") {
+				pClusterActiveTotal += int(percent)
+				pClusterCount++
 			}
 		}
 
 		if frequencyMatches != nil {
 			cluster := frequencyMatches[1]
 			freqMHz, _ := strconv.Atoi(frequencyMatches[2])
-			switch cluster {
-			case "E0-Cluster":
-				cpuMetrics.E0ClusterFreqMHz = freqMHz
-			case "E1-Cluster":
-				cpuMetrics.E1ClusterFreqMHz = freqMHz
-			case "P0-Cluster":
-				cpuMetrics.P0ClusterFreqMHz = freqMHz
-			case "P1-Cluster":
-				cpuMetrics.P1ClusterFreqMHz = freqMHz
-			case "P2-Cluster":
-				cpuMetrics.P2ClusterFreqMHz = freqMHz
-			case "P3-Cluster":
-				cpuMetrics.P3ClusterFreqMHz = freqMHz
+			if strings.HasPrefix(cluster, "E") {
+				eClusterFreqTotal += int(freqMHz)
+				cpuMetrics.EClusterFreqMHz = eClusterFreqTotal
+			} else if strings.HasPrefix(cluster, "P") {
+				pClusterFreqTotal += int(freqMHz)
+				cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
 			}
 		}
 
@@ -579,22 +571,12 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	cpuMetrics.ECores = eCores
 	cpuMetrics.PCores = pCores
 
-	// Additional calculations for M1 Ultra or other logic as needed
-	if cpuMetrics.E0ClusterActive != 0 && cpuMetrics.E1ClusterActive != 0 {
-		cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
-		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
-	} else {
-		cpuMetrics.EClusterActive = cpuMetrics.E0ClusterActive
-		cpuMetrics.EClusterFreqMHz = cpuMetrics.E0ClusterFreqMHz
+	// Calculate average active residency and frequency for E and P clusters
+	if eClusterCount > 0 {
+		cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
 	}
-
-	if cpuMetrics.P2ClusterActive != 0 && cpuMetrics.P3ClusterActive != 0 {
-		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-		freqs := []int{cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz}
-		cpuMetrics.PClusterFreqMHz = max(freqs...)
-	} else {
-		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
-		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+	if pClusterCount > 0 {
+		cpuMetrics.PClusterActive = pClusterActiveTotal / pClusterCount
 	}
 
 	return cpuMetrics
@@ -619,16 +601,6 @@ func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetric
 	}
 
 	return gpuMetrics
-}
-
-func max(values ...int) int {
-	maxVal := values[0]
-	for _, val := range values {
-		if val > maxVal {
-			maxVal = val
-		}
-	}
-	return maxVal
 }
 
 func getSOCInfo() map[string]interface{} {
