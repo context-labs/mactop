@@ -1,5 +1,7 @@
 # goasitop
 
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/context-labs/goasitop/total) ![GitHub Release](https://img.shields.io/github/v/release/context-labs/goasitop)
+
 `goasitop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
 
 ![goasitop](screenshot2.png)
