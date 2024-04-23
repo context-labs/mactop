@@ -83,7 +83,8 @@ var (
 	modelText, PowerChart, NetworkInfo, ProcessInfo *w.Paragraph
 	grid                                            *ui.Grid
 
-	stderrLogger = log.New(os.Stderr, "", 0)
+	stderrLogger      = log.New(os.Stderr, "", 0)
+	currentGridLayout = "default"
 )
 
 func setupUI() {
@@ -173,21 +174,76 @@ func setupGrid() {
 	// Define the rows and columns
 	grid.Set(
 		ui.NewRow(1.0/2, // This row now takes half the height of the grid
-			ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), // ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
-			ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)), // ProcessInfo spans this entire column
+			ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
+			ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, aneGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/4, gpuGauge),
-			ui.NewCol(1.0/4, aneGauge),
+			ui.NewCol(1.0/4, modelText),
+			ui.NewCol(1.0/4, NetworkInfo),
 			ui.NewCol(1.0/4, PowerChart),
 			ui.NewCol(1.0/4, TotalPowerChart),
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(3.0/6, memoryGauge),
-			ui.NewCol(1.0/6, modelText),
-			ui.NewCol(2.0/6, NetworkInfo),
+			ui.NewCol(1.0, memoryGauge),
 		),
 	)
+}
+
+func switchGridLayout() {
+
+	if currentGridLayout == "default" {
+		ui.Clear()
+		newGrid := ui.NewGrid()
+		newGrid.Set(
+			ui.NewRow(1.0/2, // This row now takes half the height of the grid
+				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), // ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
+				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)), // ProcessInfo spans this entire column
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0/4, gpuGauge),
+				ui.NewCol(1.0/4, aneGauge),
+				ui.NewCol(1.0/4, PowerChart),
+				ui.NewCol(1.0/4, TotalPowerChart),
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(3.0/6, memoryGauge),
+				ui.NewCol(1.0/6, modelText),
+				ui.NewCol(2.0/6, NetworkInfo),
+			),
+		)
+
+		// Set the new grid's dimensions to match the terminal size
+		termWidth, termHeight := ui.TerminalDimensions()
+		newGrid.SetRect(0, 0, termWidth, termHeight)
+		grid = newGrid
+		currentGridLayout = "alternative"
+		ui.Render(grid)
+	} else {
+		ui.Clear()
+		newGrid := ui.NewGrid()
+
+		newGrid.Set(
+			ui.NewRow(1.0/2, // This row now takes half the height of the grid
+				ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
+				ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, aneGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0/4, modelText),
+				ui.NewCol(1.0/4, NetworkInfo),
+				ui.NewCol(1.0/4, PowerChart),
+				ui.NewCol(1.0/4, TotalPowerChart),
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0, memoryGauge),
+			),
+		)
+		// Set the new grid's dimensions to match the terminal size
+		termWidth, termHeight := ui.TerminalDimensions()
+		newGrid.SetRect(0, 0, termWidth, termHeight)
+		grid = newGrid
+		currentGridLayout = "default"
+		ui.Render(grid)
+	}
 }
 
 func StderrToLogfile(logfile *os.File) {
@@ -264,8 +320,22 @@ func main() {
 				ui.Close()
 				os.Exit(0)
 				return
+			case "<Resize>":
+				payload := e.Payload.(ui.Resize)
+				grid.SetRect(0, 0, payload.Width, payload.Height)
+				ui.Render(grid)
 			case "r":
 				// refresh ui data
+				termWidth, termHeight := ui.TerminalDimensions()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				ui.Clear()
+				ui.Render(grid)
+			case "l":
+				// Set the new grid's dimensions to match the terminal size
+				termWidth, termHeight := ui.TerminalDimensions()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				ui.Clear()
+				switchGridLayout()
 				ui.Render(grid)
 			}
 		case <-done:
@@ -374,9 +444,9 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	aneGauge.Title = fmt.Sprintf("ANE Usage: %d%% @ %.1f W", aneUtil, cpuMetrics.ANEW)
 	aneGauge.Percent = aneUtil
 
-	TotalPowerChart.Title = fmt.Sprintf("%.1f W Total Power Usage", cpuMetrics.PackageW)
+	TotalPowerChart.Title = fmt.Sprintf("%.1f W Total Power", cpuMetrics.PackageW)
 	PowerChart.Title = fmt.Sprintf("%.1f W CPU - %.1f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("\nCPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
+	PowerChart.Text = fmt.Sprintf("CPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
 
 	memoryMetrics := getMemoryMetrics()
 
@@ -560,11 +630,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 			} else if strings.HasPrefix(cluster, "P") {
 				pClusterFreqTotal += int(freqMHz)
 				cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
-				// pClusterFreqReadings = append(pClusterFreqReadings, freqMHz)
-				// if len(pClusterFreqReadings) > numReadings {
-				// 	pClusterFreqReadings = pClusterFreqReadings[1:] // Remove the oldest reading
-				// }
-				// cpuMetrics.PClusterFreqMHz = average(pClusterFreqReadings)
 			}
 		}
 
@@ -624,28 +689,12 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
 	}
 
-	// // Calculate average P-Cluster Active using a moving average
-	// currentPActive := (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-	// pClusterReadings = append(pClusterReadings, currentPActive)
-	// if len(pClusterReadings) > numReadings {
-	// 	pClusterReadings = pClusterReadings[1:] // Remove the oldest reading
-	// }
-	// cpuMetrics.PClusterActive = average(pClusterReadings)
-
 	// Calculate average active residency and frequency for E and P clusters
 	if eClusterCount > 0 {
 		cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
 	}
 
 	return cpuMetrics
-}
-
-func average(nums []int) int {
-	sum := 0
-	for _, num := range nums {
-		sum += num
-	}
-	return sum / len(nums)
 }
 
 func max(nums ...int) int {

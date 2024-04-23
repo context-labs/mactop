@@ -1,8 +1,13 @@
 # goasitop
 
-`goasitop` is a terminal-based monitoring tool "top" designed to display real-time power metrics for Apple Silicon chips. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
+`goasitop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
 
-![Screenshot](screenshot.png)
+![goasitop](screenshot2.png)
+
+## Compatibility
+
+- Apple Silicon Only (ARM64)
+- macOS Monterey 12.3+
 
 ## Features
 
@@ -10,11 +15,15 @@
 - Real-time CPU and GPU power usage display.
 - Detailed metrics for different CPU clusters (E-Cores and P-Cores).
 - Memory usage and swap information.
-- Network usage information and Disk Activity Read/Write
+- Network usage information
+- Disk Activity Read/Write
 - Easy-to-read terminal UI
+- Two layouts: default and alternative
 - Support for all Apple Silicon models.
 
 ## Install via Homebrew
+
+Help get us on the official Homebrew formulas by giving us a star! [goasitop](https://github.com/context-labs/goasitop)
 
 ```bash
 brew tap context-labs/goasitop https://github.com/context-labs/goasitop
@@ -60,6 +69,7 @@ After installation, you can start `goasitop` by simply running:
 Use the following keys to interact with the application:
 - `q`: Quit the application.
 - `r`: Refresh the UI data manually.
+- `l`: Toggle the current layout.
 
 ## Contributing
 
@@ -70,6 +80,13 @@ Contributions are what make the open-source community such an amazing place to l
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
+
+## What does goasitop use to get real-time data?
+
+- `sysctl`: For CPU model information
+- `system_profiler`: For GPU Core Count
+- `psutil`: For memory and swap metrics
+- `powermetrics`: For majority of CPU, GPU, Network, and Disk metrics
 
 ## License
 
