@@ -718,19 +718,31 @@ func maxInt(nums []int) int {
 }
 
 func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetrics {
-	re := regexp.MustCompile(`GPU HW active residency:\s+(\d+\.\d+)%`) // Regex to capture the floating-point number followed by '%'
+	re := regexp.MustCompile(`GPU\s*(HW)?\s*active\s*(residency|frequency):\s+(\d+\.\d+)%?`)
+	freqRe := regexp.MustCompile(`(\d+)\s*MHz:\s*(\d+)%`)
 	lines := strings.Split(powermetricsOutput, "\n")
 
 	for _, line := range lines {
-		if strings.Contains(line, "GPU HW active residency") {
+		if strings.Contains(line, "GPU active") || strings.Contains(line, "GPU HW active") {
 			matches := re.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				gpuMetrics.Active, _ = strconv.ParseFloat(matches[1], 64) // matches[1] contains the first captured group, the percentage
+			if len(matches) > 3 {
+				if strings.Contains(matches[2], "residency") {
+					gpuMetrics.Active, _ = strconv.ParseFloat(matches[3], 64)
+				} else if strings.Contains(matches[2], "frequency") {
+					gpuMetrics.FreqMHz, _ = strconv.Atoi(strings.TrimSuffix(matches[3], "MHz"))
+				}
 			}
-		} else if strings.Contains(line, "GPU HW active frequency") {
-			fields := strings.Fields(line)
-			if len(fields) >= 5 {
-				gpuMetrics.FreqMHz, _ = strconv.Atoi(strings.TrimSuffix(fields[4], "MHz"))
+
+			freqMatches := freqRe.FindAllStringSubmatch(line, -1)
+			for _, match := range freqMatches {
+				if len(match) == 3 {
+					freq, _ := strconv.Atoi(match[1])
+					residency, _ := strconv.ParseFloat(match[2], 64)
+					if residency > 0 {
+						gpuMetrics.FreqMHz = freq
+						break
+					}
+				}
 			}
 		}
 	}
