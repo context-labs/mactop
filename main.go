@@ -252,6 +252,25 @@ func StderrToLogfile(logfile *os.File) {
 
 func main() {
 
+	if os.Geteuid() != 0 && len(os.Args) > 1 && os.Args[1] != "--test" {
+		fmt.Println("Welcome to goasitop! Please try again and run goasitop with sudo privileges!")
+		fmt.Println("Usage: sudo goasitop")
+		os.Exit(1)
+	}
+
+	// get version from git
+	version := "v0.1.0"
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println("goasitop version:", version)
+		os.Exit(0)
+	}
+
+	if len(os.Args) > 2 && os.Args[1] == "--test" {
+		testInput := os.Args[2]
+		fmt.Printf("Test input received: %s\n", testInput)
+		os.Exit(0)
+	}
+
 	logfile, err := setupLogfile()
 	if err != nil {
 		stderrLogger.Fatalf("failed to setup log file: %v", err)
