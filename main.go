@@ -250,7 +250,7 @@ func StderrToLogfile(logfile *os.File) {
 func main() {
 
 	// get version from git
-	version := "v0.1.1"
+	version := "v0.1.2"
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("goasitop version:", version)
 		os.Exit(0)
@@ -695,14 +695,20 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
 	}
 
-	if cpuMetrics.P3ClusterActive != 0 {
+	if cpuMetrics.PClusterActive != 0 {
 		// M1 Ultra
-		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-		freqs := []int{cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz}
-		cpuMetrics.PClusterFreqMHz = maxInt(freqs)
-	} else {
-		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
-		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+		if cpuMetrics.P2ClusterActive != 0 {
+			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+			freqs := []int{cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz}
+			cpuMetrics.PClusterFreqMHz = maxInt(freqs)
+		} else {
+			if cpuMetrics.P0ClusterActive != 0 {
+				cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
+				cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+			} else {
+				cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
+			}
+		}
 	}
 
 	// Calculate average active residency and frequency for E and P clusters
