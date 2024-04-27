@@ -58,15 +58,17 @@ To install `goasitop`, follow these steps:
 
 4. Run the application:
    ```bash
-   ./goasitop
+   sudo ./goasitop
    ```
 
 ## Usage
 
 After installation, you can start `goasitop` by simply running:
 ```bash
-./goasitop
+sudo ./goasitop
 ```
+
+`sudo` is required to run `goasitop`
 
 Use the following keys to interact with the application:
 - `q`: Quit the application.
