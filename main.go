@@ -170,8 +170,6 @@ func setupUI() {
 
 func setupGrid() {
 	grid = ui.NewGrid()
-
-	// Define the rows and columns
 	grid.Set(
 		ui.NewRow(1.0/2, // This row now takes half the height of the grid
 			ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
@@ -211,8 +209,6 @@ func switchGridLayout() {
 				ui.NewCol(2.0/6, NetworkInfo),
 			),
 		)
-
-		// Set the new grid's dimensions to match the terminal size
 		termWidth, termHeight := ui.TerminalDimensions()
 		newGrid.SetRect(0, 0, termWidth, termHeight)
 		grid = newGrid
@@ -237,7 +233,6 @@ func switchGridLayout() {
 				ui.NewCol(1.0, memoryGauge),
 			),
 		)
-		// Set the new grid's dimensions to match the terminal size
 		termWidth, termHeight := ui.TerminalDimensions()
 		newGrid.SetRect(0, 0, termWidth, termHeight)
 		grid = newGrid
@@ -250,16 +245,12 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
+// goasitop main function
+
 func main() {
 
-	if os.Geteuid() != 0 && len(os.Args) > 1 && os.Args[1] != "--test" {
-		fmt.Println("Welcome to goasitop! Please try again and run goasitop with sudo privileges!")
-		fmt.Println("Usage: sudo goasitop")
-		os.Exit(1)
-	}
-
 	// get version from git
-	version := "v0.1.0"
+	version := "v0.1.1"
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("goasitop version:", version)
 		os.Exit(0)
@@ -269,6 +260,12 @@ func main() {
 		testInput := os.Args[2]
 		fmt.Printf("Test input received: %s\n", testInput)
 		os.Exit(0)
+	}
+
+	if os.Geteuid() != 0 {
+		fmt.Println("Welcome to goasitop! Please try again and run goasitop with sudo privileges!")
+		fmt.Println("Usage: sudo goasitop")
+		os.Exit(1)
 	}
 
 	logfile, err := setupLogfile()
