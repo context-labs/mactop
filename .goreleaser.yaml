@@ -35,12 +35,12 @@ changelog:
 
 brews:
   - name: "{{ .ProjectName }}"
-    homepage: "https://github.com/context-labs/goasitop"
+    homepage: "https://github.com/context-labs/mactop"
     description: "Apple Silicon Monitor Top written in Go Lang"
-    url_template: "https://github.com/context-labs/goasitop/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    caveats: "goasitop requires macOS 12+, and runs only on Apple Silicon."
+    url_template: "https://github.com/context-labs/mactop/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    caveats: "mactop requires macOS 12+, and runs only on Apple Silicon."
     install: |
       bin.install "{{ .ProjectName }}"
     repository:
       owner: "context-labs"
-      name: "goasitop"
+      name: "mactop"

@@ -1,5 +1,5 @@
 // Copyright (c) 2024 Carsen Klock under MIT License
-// goasitop is a simple terminal based Apple Silicon power monitor written in Go Lang!
+// mactop is a simple terminal based Apple Silicon power monitor written in Go Lang!
 
 package main
 
@@ -245,14 +245,14 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
-// goasitop main function
+// mactop main function
 
 func main() {
 
 	// get version from git
 	version := "v0.1.2"
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Println("goasitop version:", version)
+		fmt.Println("mactop version:", version)
 		os.Exit(0)
 	}
 
@@ -263,8 +263,8 @@ func main() {
 	}
 
 	if os.Geteuid() != 0 {
-		fmt.Println("Welcome to goasitop! Please try again and run goasitop with sudo privileges!")
-		fmt.Println("Usage: sudo goasitop")
+		fmt.Println("Welcome to mactop! Please try again and run mactop with sudo privileges!")
+		fmt.Println("Usage: sudo mactop")
 		os.Exit(1)
 	}
 
@@ -368,7 +368,7 @@ func setupLogfile() (*os.File, error) {
 		return nil, fmt.Errorf("failed to make the log directory: %v", err)
 	}
 	// open the log file
-	logfile, err := os.OpenFile("logs/goasitop.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
+	logfile, err := os.OpenFile("logs/mactop.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %v", err)
 	}
@@ -515,7 +515,7 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 		matches := dataRegex.FindStringSubmatch(line)
 		if len(matches) > 3 {
 			processName := matches[1]
-			if processName == "goasitop" || processName == "main" || processName == "powermetrics" {
+			if processName == "mactop" || processName == "main" || processName == "powermetrics" {
 				continue // Skip this process
 			}
 			id, _ := strconv.Atoi(matches[2])

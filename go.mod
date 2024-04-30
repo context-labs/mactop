@@ -1,4 +1,4 @@
-module github.com/context-labs/goasitop/v2
+module github.com/context-labs/mactop/v2
 
 go 1.20
 

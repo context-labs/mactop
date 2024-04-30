@@ -1,10 +1,10 @@
-# goasitop
+# mactop
 
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/context-labs/goasitop/total) ![GitHub Release](https://img.shields.io/github/v/release/context-labs/goasitop)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/context-labs/mactop/total) ![GitHub Release](https://img.shields.io/github/v/release/context-labs/mactop)
 
-`goasitop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
+`mactop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
 
-![goasitop](screenshot2.png)
+![mactop](screenshot2.png)
 
 ## Compatibility
 
@@ -25,30 +25,30 @@
 
 ## Install via Homebrew
 
-Help get us on the official Homebrew formulas by giving us a star! [goasitop](https://github.com/context-labs/goasitop)
+Help get us on the official Homebrew formulas by giving us a star! [mactop](https://github.com/context-labs/mactop)
 
 ```bash
-brew tap context-labs/goasitop https://github.com/context-labs/goasitop
+brew tap context-labs/mactop https://github.com/context-labs/mactop
 ```
 
 ```bash
-brew install goasitop
+brew install mactop
 ```
 
 ```bash
-sudo goasitop
+sudo mactop
 ```
 
 ## Installation
 
-To install `goasitop`, follow these steps:
+To install `mactop`, follow these steps:
 
 1. Ensure you have Go installed on your machine. If not, you can install it by following the instructions here: [Go Installation Guide](https://go.dev/doc/install).
 
 2. Clone the repository:
    ```bash
-   git clone https://github.com/context-labs/goasitop.git
-   cd goasitop
+   git clone https://github.com/context-labs/mactop.git
+   cd mactop
    ```
 
 3. Build the application:
@@ -58,17 +58,17 @@ To install `goasitop`, follow these steps:
 
 4. Run the application:
    ```bash
-   sudo ./goasitop
+   sudo ./mactop
    ```
 
 ## Usage
 
-After installation, you can start `goasitop` by simply running:
+After installation, you can start `mactop` by simply running:
 ```bash
-sudo ./goasitop
+sudo ./mactop
 ```
 
-`sudo` is required to run `goasitop`
+`sudo` is required to run `mactop`
 
 Use the following keys to interact with the application:
 - `q`: Quit the application.
@@ -79,13 +79,13 @@ Use the following keys to interact with the application:
 
 Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-1. Fork goasitop
+1. Fork mactop
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-## What does goasitop use to get real-time data?
+## What does mactop use to get real-time data?
 
 - `sysctl`: For CPU model information
 - `system_profiler`: For GPU Core Count
@@ -100,7 +100,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 Carsen Klock - [@carsenklock](https://twitter.com/carsenklock)
 
-Project Link: [https://github.com/context-labs/goasitop](https://github.com/context-labs/goasitop)
+Project Link: [https://github.com/context-labs/mactop](https://github.com/context-labs/mactop)
 
 ## Acknowledgements
 
