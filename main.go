@@ -250,7 +250,7 @@ func StderrToLogfile(logfile *os.File) {
 func main() {
 
 	// get version from git
-	version := "v0.1.2"
+	version := "v0.1.4"
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("mactop version:", version)
 		os.Exit(0)
