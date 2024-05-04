@@ -250,7 +250,7 @@ func StderrToLogfile(logfile *os.File) {
 func main() {
 
 	version := "v0.1.5"
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
+	if len(os.Args) > 1 && os.Args[1] == "--version" || len(os.Args) > 1 && os.Args[1] == "-v" {
 		fmt.Println("mactop version:", version)
 		os.Exit(0)
 	}

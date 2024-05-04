@@ -39,6 +39,16 @@ brew install mactop
 sudo mactop
 ```
 
+## Updating via Homebrew
+
+```bash
+brew update
+```
+
+```bash
+brew upgrade mactop
+```
+
 ## Installation
 
 To install `mactop`, follow these steps:
