@@ -85,6 +85,7 @@ var (
 
 	stderrLogger      = log.New(os.Stderr, "", 0)
 	currentGridLayout = "default"
+	updateInterval    = 1000
 )
 
 func setupUI() {
@@ -246,11 +247,9 @@ func StderrToLogfile(logfile *os.File) {
 }
 
 // mactop main function
-
 func main() {
 
-	// get version from git
-	version := "v0.1.4"
+	version := "v0.1.5"
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("mactop version:", version)
 		os.Exit(0)
@@ -268,6 +267,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "--interval" || len(os.Args) > 1 && os.Args[1] == "-i" {
+		interval, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Println("Invalid interval:", err)
+			os.Exit(1)
+		}
+		updateInterval = interval
+	}
+
 	logfile, err := setupLogfile()
 	if err != nil {
 		stderrLogger.Fatalf("failed to setup log file: %v", err)
@@ -280,14 +288,11 @@ func main() {
 	defer ui.Close()
 
 	StderrToLogfile(logfile)
-
 	setupUI() // Initialize UI components and layout
-
 	setupGrid()
 
 	termWidth, termHeight := ui.TerminalDimensions()
 	grid.SetRect(0, 0, termWidth, termHeight)
-
 	ui.Render(grid)
 
 	cpuMetricsChan := make(chan CPUMetrics)
@@ -386,7 +391,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	var gpuMetrics GPUMetrics
 	var netdiskMetrics NetDiskMetrics
 	var processMetrics []ProcessMetrics
-	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-process-gpu", "--show-process-energy", "--show-initial-usage", "--show-process-netstats", "-i 1000")
+	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-process-gpu", "--show-process-energy", "--show-initial-usage", "--show-process-netstats", "-i", strconv.Itoa(updateInterval))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stderrLogger.Fatalf("failed to get stdout pipe: %v", err)
@@ -483,27 +488,20 @@ func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 }
 
 func updateProcessUI(processMetrics []ProcessMetrics) {
-	// Assuming `ProcessInfo` is a Paragraph widget from termui
-	// Clear previous content
 	ProcessInfo.Text = ""
 
-	// Sort processMetrics by CPU ms/s in descending order
 	sort.Slice(processMetrics, func(i, j int) bool {
 		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
 	})
 
-	// Limit the number of entries to 15
 	maxEntries := 15
 	if len(processMetrics) > maxEntries {
 		processMetrics = processMetrics[:maxEntries]
 	}
 
-	// Create a string with each process on a new line
 	for _, pm := range processMetrics {
 		ProcessInfo.Text += fmt.Sprintf("%d - %s: %.2f ms/s\n", pm.ID, pm.Name, pm.CPUUsage)
 	}
-
-	// Render the updated ProcessInfo
 	ui.Render(ProcessInfo)
 }
 
@@ -695,20 +693,17 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
 	}
 
-	if cpuMetrics.PClusterActive != 0 {
+	if cpuMetrics.P3ClusterActive != 0 {
 		// M1 Ultra
-		if cpuMetrics.P2ClusterActive != 0 {
-			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-			freqs := []int{cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz}
-			cpuMetrics.PClusterFreqMHz = maxInt(freqs)
-		} else {
-			if cpuMetrics.P0ClusterActive != 0 {
-				cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
-				cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
-			} else {
-				cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
-			}
-		}
+		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
+	} else if cpuMetrics.P1ClusterActive != 0 {
+		// M1/M2/M3 Max/Pro
+		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
+		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+	} else {
+		// M1
+		cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
 	}
 
 	// Calculate average active residency and frequency for E and P clusters
@@ -727,16 +722,6 @@ func max(nums ...int) int {
 		}
 	}
 	return maxVal
-}
-
-func maxInt(nums []int) int {
-	max := nums[0]
-	for _, num := range nums {
-		if num > max {
-			max = num
-		}
-	}
-	return max
 }
 
 func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetrics {

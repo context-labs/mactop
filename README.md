@@ -70,10 +70,22 @@ sudo ./mactop
 
 `sudo` is required to run `mactop`
 
-Use the following keys to interact with the application:
+## mactop Flags
+
+- `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
+- `--version` or `-v`: Print the version of mactop.
+
+## mactop Commands
+Use the following keys to interact with the application while its running:
 - `q`: Quit the application.
 - `r`: Refresh the UI data manually.
 - `l`: Toggle the current layout.
+
+## Confirmed tested working M series chips
+
+- M1
+- M1 Max
+- M1 Ultra
 
 ## Contributing
 
