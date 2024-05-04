@@ -177,8 +177,8 @@ func setupGrid() {
 			ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, aneGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/4, modelText),
-			ui.NewCol(1.0/4, NetworkInfo),
+			ui.NewCol(1.0/6, modelText),
+			ui.NewCol(1.0/3, NetworkInfo),
 			ui.NewCol(1.0/4, PowerChart),
 			ui.NewCol(1.0/4, TotalPowerChart),
 		),
