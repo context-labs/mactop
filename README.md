@@ -21,6 +21,8 @@
 - Disk Activity Read/Write
 - Easy-to-read terminal UI
 - Two layouts: default and alternative
+- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white)
+- Customizable update interval (default is 1000ms)
 - Support for all Apple Silicon models.
 
 ## Install via Homebrew
@@ -83,6 +85,7 @@ sudo ./mactop
 ## mactop Flags
 
 - `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
+- `--color` or `-c`: Set the UI color. Default is white. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)
 - `--version` or `-v`: Print the version of mactop.
 - `--help` or `-h`: Show a help message about these flags and how to run mactop.
 
@@ -91,6 +94,10 @@ Use the following keys to interact with the application while its running:
 - `q`: Quit the application.
 - `r`: Refresh the UI data manually.
 - `l`: Toggle the current layout.
+
+## Example Theme (Green) Screenshot (sudo mactop -c green)
+
+![mactop theme](screenshot3.png)
 
 ## Confirmed tested working M series chips
 
