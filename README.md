@@ -82,6 +82,11 @@ sudo ./mactop
 
 `sudo` is required to run `mactop`
 
+Example with flags
+```bash
+sudo mactop --interval 1000 --color green
+```
+
 ## mactop Flags
 
 - `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
