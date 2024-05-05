@@ -25,7 +25,7 @@
 
 ## Install via Homebrew
 
-Help get us on the official Homebrew formulas by giving us a star! [mactop](https://github.com/context-labs/mactop)
+Help get us on the official Homebrew formulas by giving us a star and watching this repo! [mactop](https://github.com/context-labs/mactop)
 
 ```bash
 brew tap context-labs/mactop https://github.com/context-labs/mactop
@@ -84,6 +84,7 @@ sudo ./mactop
 
 - `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
 - `--version` or `-v`: Print the version of mactop.
+- `--help` or `-h`: Show a help message about these flags and how to run mactop.
 
 ## mactop Commands
 Use the following keys to interact with the application while its running:
@@ -96,6 +97,8 @@ Use the following keys to interact with the application while its running:
 - M1
 - M1 Max
 - M1 Ultra
+
+(If you have a confirmed working M series chip that is not listed, please open an issue!)
 
 ## Contributing
 
@@ -123,6 +126,10 @@ Distributed under the MIT License. See `LICENSE` for more information.
 Carsen Klock - [@carsenklock](https://twitter.com/carsenklock)
 
 Project Link: [https://github.com/context-labs/mactop](https://github.com/context-labs/mactop)
+
+## Disclaimer
+
+This tool is not officially supported by Apple. It is provided as is, and may not work as expected. Use at your own risk.
 
 ## Acknowledgements
 

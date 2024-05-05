@@ -94,7 +94,6 @@ func setupUI() {
 	modelText = w.NewParagraph()
 	modelText.Title = "Apple Silicon"
 
-	// Accessing map values with type assertion
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
 		modelName = "Unknown Model"
@@ -189,7 +188,6 @@ func setupGrid() {
 }
 
 func switchGridLayout() {
-
 	if currentGridLayout == "default" {
 		ui.Clear()
 		newGrid := ui.NewGrid()
@@ -246,8 +244,17 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
-// mactop main function
 func main() {
+
+	if len(os.Args) > 1 && os.Args[1] == "--help" || len(os.Args) > 1 && os.Args[1] == "-h" {
+		fmt.Println("Usage: mactop [--help] [--version] [--interval]")
+		fmt.Println("--help: Show this help message")
+		fmt.Println("--version: Show the version of mactop")
+		fmt.Println("--interval: Set the powermetrics update interval in milliseconds. Default is 1000.")
+		fmt.Println("You must use sudo to run mactop, as powermetrics requires root privileges.")
+		fmt.Println("For more information, see https://github.com/context-labs/mactop")
+		os.Exit(0)
+	}
 
 	version := "v0.1.5"
 	if len(os.Args) > 1 && os.Args[1] == "--version" || len(os.Args) > 1 && os.Args[1] == "-v" {
@@ -489,16 +496,13 @@ func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 
 func updateProcessUI(processMetrics []ProcessMetrics) {
 	ProcessInfo.Text = ""
-
 	sort.Slice(processMetrics, func(i, j int) bool {
 		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
 	})
-
 	maxEntries := 15
 	if len(processMetrics) > maxEntries {
 		processMetrics = processMetrics[:maxEntries]
 	}
-
 	for _, pm := range processMetrics {
 		ProcessInfo.Text += fmt.Sprintf("%d - %s: %.2f ms/s\n", pm.ID, pm.Name, pm.CPUUsage)
 	}
@@ -529,7 +533,6 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 		}
 	}
 
-	// Sort by CPU ms/s in descending order
 	sort.Slice(processMetrics, func(i, j int) bool {
 		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
 	})
@@ -538,10 +541,8 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 }
 
 func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetrics) NetDiskMetrics {
-
 	outRegex := regexp.MustCompile(`out:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
 	inRegex := regexp.MustCompile(`in:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
-
 	outMatches := outRegex.FindStringSubmatch(powermetricsOutput)
 	inMatches := inRegex.FindStringSubmatch(powermetricsOutput)
 
@@ -557,7 +558,6 @@ func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetri
 
 	readRegex := regexp.MustCompile(`read:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
 	writeRegex := regexp.MustCompile(`write:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
-
 	readMatches := readRegex.FindStringSubmatch(powermetricsOutput)
 	writeMatches := writeRegex.FindStringSubmatch(powermetricsOutput)
 
@@ -587,9 +587,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
 
-	// const numReadings = 5
-	// var pClusterReadings []int
-	// var pClusterFreqReadings []int
 	for _, line := range lines {
 		residencyMatches := residencyRe.FindStringSubmatch(line)
 		frequencyMatches := frequencyRe.FindStringSubmatch(line)
