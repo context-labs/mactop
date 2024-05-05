@@ -1,5 +1,6 @@
 // Copyright (c) 2024 Carsen Klock under MIT License
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang!
+// github.com/context-labs/mactop
 
 package main
 
@@ -7,6 +8,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
@@ -78,13 +81,16 @@ type MemoryMetrics struct {
 
 var (
 	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge        *w.Gauge
-	TotalPowerChart                                 *w.Plot
+	TotalPowerChart                                 *w.BarChart
 	memoryGauge                                     *w.Gauge
 	modelText, PowerChart, NetworkInfo, ProcessInfo *w.Paragraph
 	grid                                            *ui.Grid
 
+	powerValues       []float64
+	lastUpdateTime    time.Time
 	stderrLogger      = log.New(os.Stderr, "", 0)
 	currentGridLayout = "default"
+	updateInterval    = 1000
 )
 
 func setupUI() {
@@ -93,7 +99,6 @@ func setupUI() {
 	modelText = w.NewParagraph()
 	modelText.Title = "Apple Silicon"
 
-	// Accessing map values with type assertion
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
 		modelName = "Unknown Model"
@@ -154,12 +159,16 @@ func setupUI() {
 	ProcessInfo = w.NewParagraph()
 	ProcessInfo.Title = "Process Info"
 
-	TotalPowerChart = w.NewPlot()
-	TotalPowerChart.Title = "Total Power Usage (W)"
-	TotalPowerChart.Data = make([][]float64, 1)
-	TotalPowerChart.Data[0] = []float64{1, 2, 3, 4, 5}
-	TotalPowerChart.AxesColor = ui.ColorGreen
-	TotalPowerChart.LineColors = []ui.Color{ui.ColorCyan}
+	TotalPowerChart = w.NewBarChart()
+	TotalPowerChart.Title = "~ W Total Power"
+	TotalPowerChart.SetRect(50, 0, 75, 10)
+	TotalPowerChart.BarWidth = 5 // Adjust the bar width to fill the available space
+	TotalPowerChart.BarGap = 1   // Remove the gap between the bars
+	TotalPowerChart.PaddingBottom = 0
+	TotalPowerChart.PaddingTop = 1
+	TotalPowerChart.NumFormatter = func(num float64) string {
+		return ""
+	}
 
 	memoryGauge = w.NewGauge()
 	memoryGauge.Title = "Memory Usage"
@@ -176,8 +185,8 @@ func setupGrid() {
 			ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, aneGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/4, modelText),
-			ui.NewCol(1.0/4, NetworkInfo),
+			ui.NewCol(1.0/6, modelText),
+			ui.NewCol(1.0/3, NetworkInfo),
 			ui.NewCol(1.0/4, PowerChart),
 			ui.NewCol(1.0/4, TotalPowerChart),
 		),
@@ -188,7 +197,6 @@ func setupGrid() {
 }
 
 func switchGridLayout() {
-
 	if currentGridLayout == "default" {
 		ui.Clear()
 		newGrid := ui.NewGrid()
@@ -245,13 +253,21 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
-// mactop main function
-
 func main() {
 
-	// get version from git
-	version := "v0.1.4"
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
+	if len(os.Args) > 1 && os.Args[1] == "--help" || len(os.Args) > 1 && os.Args[1] == "-h" {
+		fmt.Println("Usage: mactop [--help] [--version] [--interval]")
+		fmt.Println("--help: Show this help message")
+		fmt.Println("--version: Show the version of mactop")
+		fmt.Println("--interval: Set the powermetrics update interval in milliseconds. Default is 1000.")
+		fmt.Println("--color: Set the UI color. Default is white. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)")
+		fmt.Println("You must use sudo to run mactop, as powermetrics requires root privileges.")
+		fmt.Println("For more information, see https://github.com/context-labs/mactop")
+		os.Exit(0)
+	}
+
+	version := "v0.1.5"
+	if len(os.Args) > 1 && os.Args[1] == "--version" || len(os.Args) > 1 && os.Args[1] == "-v" {
 		fmt.Println("mactop version:", version)
 		os.Exit(0)
 	}
@@ -268,26 +284,78 @@ func main() {
 		os.Exit(1)
 	}
 
-	logfile, err := setupLogfile()
-	if err != nil {
-		stderrLogger.Fatalf("failed to setup log file: %v", err)
+	if len(os.Args) > 2 && os.Args[1] == "--color" || len(os.Args) > 2 && os.Args[1] == "-c" {
+		colorName := strings.ToLower(os.Args[2])
+		var color ui.Color
+		switch colorName {
+		case "green":
+			color = ui.ColorGreen
+		case "red":
+			color = ui.ColorRed
+		case "blue":
+			color = ui.ColorBlue
+		case "cyan":
+			color = ui.ColorCyan
+		case "magenta":
+			color = ui.ColorMagenta
+		case "yellow":
+			color = ui.ColorYellow
+		case "white":
+			color = ui.ColorWhite
+		default:
+			stderrLogger.Printf("Unsupported color: %s. Using default color.\n", colorName)
+			color = ui.ColorWhite
+		}
+		ui.Theme.Block.Title.Fg = color
+		ui.Theme.Block.Border.Fg = color
+		ui.Theme.Paragraph.Text.Fg = color
+		ui.Theme.BarChart.Bars = []ui.Color{color}
+		ui.Theme.Gauge.Label.Fg = color
+		ui.Theme.Gauge.Bar = color
+		logfile, err := setupLogfile()
+		if err != nil {
+			stderrLogger.Fatalf("failed to setup log file: %v", err)
+		}
+		defer logfile.Close()
+
+		if err := ui.Init(); err != nil {
+			stderrLogger.Fatalf("failed to initialize termui: %v", err)
+		}
+		defer ui.Close()
+		StderrToLogfile(logfile)
+		setupUI()
+		cpu1Gauge.BarColor = color
+		cpu2Gauge.BarColor = color
+		aneGauge.BarColor = color
+		gpuGauge.BarColor = color
+		memoryGauge.BarColor = color
+	} else {
+		logfile, err := setupLogfile()
+		if err != nil {
+			stderrLogger.Fatalf("failed to setup log file: %v", err)
+		}
+		defer logfile.Close()
+
+		if err := ui.Init(); err != nil {
+			stderrLogger.Fatalf("failed to initialize termui: %v", err)
+		}
+		defer ui.Close()
+		StderrToLogfile(logfile)
+		setupUI()
 	}
-	defer logfile.Close()
 
-	if err := ui.Init(); err != nil {
-		stderrLogger.Fatalf("failed to initialize termui: %v", err)
+	if len(os.Args) > 1 && os.Args[1] == "--interval" || len(os.Args) > 1 && os.Args[1] == "-i" {
+		interval, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Println("Invalid interval:", err)
+			os.Exit(1)
+		}
+		updateInterval = interval
 	}
-	defer ui.Close()
-
-	StderrToLogfile(logfile)
-
-	setupUI() // Initialize UI components and layout
-
 	setupGrid()
 
 	termWidth, termHeight := ui.TerminalDimensions()
 	grid.SetRect(0, 0, termWidth, termHeight)
-
 	ui.Render(grid)
 
 	cpuMetricsChan := make(chan CPUMetrics)
@@ -300,7 +368,7 @@ func main() {
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
 	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan, processMetricsChan)
-
+	lastUpdateTime = time.Now()
 	go func() {
 		for {
 			select {
@@ -363,21 +431,15 @@ func main() {
 }
 
 func setupLogfile() (*os.File, error) {
-	// create the log directory
 	if err := os.MkdirAll("logs", 0755); err != nil {
 		return nil, fmt.Errorf("failed to make the log directory: %v", err)
 	}
-	// open the log file
 	logfile, err := os.OpenFile("logs/mactop.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %v", err)
 	}
-
-	// log time, filename, and line number
 	log.SetFlags(log.Ltime | log.Lshortfile)
-	// log to file
 	log.SetOutput(logfile)
-
 	return logfile, nil
 }
 
@@ -386,7 +448,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	var gpuMetrics GPUMetrics
 	var netdiskMetrics NetDiskMetrics
 	var processMetrics []ProcessMetrics
-	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-process-gpu", "--show-process-energy", "--show-initial-usage", "--show-process-netstats", "-i 1000")
+	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-process-gpu", "--show-process-energy", "--show-initial-usage", "--show-process-netstats", "-i", strconv.Itoa(updateInterval))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stderrLogger.Fatalf("failed to get stdout pipe: %v", err)
@@ -433,21 +495,22 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 }
 
 func updateTotalPowerChart(newPowerValue float64) {
-	// stderrLogger.Printf("Rendering TotalPowerChart with data: %v\n", TotalPowerChart.Data)
-	if len(TotalPowerChart.Data[0]) == 0 {
-		TotalPowerChart.Data[0] = append(TotalPowerChart.Data[0], 0) // Ensure there's at least one data point
-	}
-
-	TotalPowerChart.Data[0] = append(TotalPowerChart.Data[0], newPowerValue)
-
-	if len(TotalPowerChart.Data[0]) > 250 {
-		TotalPowerChart.Data[0] = TotalPowerChart.Data[0][1:]
-	}
-
-	if len(TotalPowerChart.Data[0]) > 0 {
+	currentTime := time.Now()
+	powerValues = append(powerValues, newPowerValue)
+	if currentTime.Sub(lastUpdateTime) >= 2*time.Second {
+		var sum float64
+		for _, value := range powerValues {
+			sum += value
+		}
+		averagePower := sum / float64(len(powerValues))
+		averagePower = math.Round(averagePower)
+		TotalPowerChart.Data = append([]float64{averagePower}, TotalPowerChart.Data...)
+		if len(TotalPowerChart.Data) > 25 {
+			TotalPowerChart.Data = TotalPowerChart.Data[:25]
+		}
+		powerValues = nil
+		lastUpdateTime = currentTime
 		ui.Render(TotalPowerChart)
-	} else {
-		log.Println("No data to render for TotalPowerChart")
 	}
 }
 
@@ -465,7 +528,6 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	PowerChart.Text = fmt.Sprintf("CPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
 
 	memoryMetrics := getMemoryMetrics()
-
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
 
@@ -483,27 +545,17 @@ func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 }
 
 func updateProcessUI(processMetrics []ProcessMetrics) {
-	// Assuming `ProcessInfo` is a Paragraph widget from termui
-	// Clear previous content
 	ProcessInfo.Text = ""
-
-	// Sort processMetrics by CPU ms/s in descending order
 	sort.Slice(processMetrics, func(i, j int) bool {
 		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
 	})
-
-	// Limit the number of entries to 15
 	maxEntries := 15
 	if len(processMetrics) > maxEntries {
 		processMetrics = processMetrics[:maxEntries]
 	}
-
-	// Create a string with each process on a new line
 	for _, pm := range processMetrics {
 		ProcessInfo.Text += fmt.Sprintf("%d - %s: %.2f ms/s\n", pm.ID, pm.Name, pm.CPUUsage)
 	}
-
-	// Render the updated ProcessInfo
 	ui.Render(ProcessInfo)
 }
 
@@ -531,19 +583,15 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 		}
 	}
 
-	// Sort by CPU ms/s in descending order
 	sort.Slice(processMetrics, func(i, j int) bool {
 		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
 	})
-
 	return processMetrics
 }
 
 func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetrics) NetDiskMetrics {
-
 	outRegex := regexp.MustCompile(`out:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
 	inRegex := regexp.MustCompile(`in:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
-
 	outMatches := outRegex.FindStringSubmatch(powermetricsOutput)
 	inMatches := inRegex.FindStringSubmatch(powermetricsOutput)
 
@@ -559,7 +607,6 @@ func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetri
 
 	readRegex := regexp.MustCompile(`read:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
 	writeRegex := regexp.MustCompile(`write:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
-
 	readMatches := readRegex.FindStringSubmatch(powermetricsOutput)
 	writeMatches := writeRegex.FindStringSubmatch(powermetricsOutput)
 
@@ -589,9 +636,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
 
-	// const numReadings = 5
-	// var pClusterReadings []int
-	// var pClusterFreqReadings []int
 	for _, line := range lines {
 		residencyMatches := residencyRe.FindStringSubmatch(line)
 		frequencyMatches := frequencyRe.FindStringSubmatch(line)
@@ -694,21 +738,17 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
 		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
 	}
-
-	if cpuMetrics.PClusterActive != 0 {
+	if cpuMetrics.P3ClusterActive != 0 {
 		// M1 Ultra
-		if cpuMetrics.P2ClusterActive != 0 {
-			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-			freqs := []int{cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz}
-			cpuMetrics.PClusterFreqMHz = maxInt(freqs)
-		} else {
-			if cpuMetrics.P0ClusterActive != 0 {
-				cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
-				cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
-			} else {
-				cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
-			}
-		}
+		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
+	} else if cpuMetrics.P1ClusterActive != 0 {
+		// M1/M2/M3 Max/Pro
+		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
+		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+	} else {
+		// M1
+		cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
 	}
 
 	// Calculate average active residency and frequency for E and P clusters
@@ -727,16 +767,6 @@ func max(nums ...int) int {
 		}
 	}
 	return maxVal
-}
-
-func maxInt(nums []int) int {
-	max := nums[0]
-	for _, num := range nums {
-		if num > max {
-			max = num
-		}
-	}
-	return max
 }
 
 func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetrics {
@@ -798,7 +828,6 @@ func getSOCInfo() map[string]interface{} {
 		"gpu_core_count": getGPUCores(),
 	}
 
-	// TDP (power)
 	switch socInfo["name"] {
 	case "Apple M1 Max":
 		socInfo["cpu_max_power"] = 30
@@ -820,7 +849,6 @@ func getSOCInfo() map[string]interface{} {
 		socInfo["gpu_max_power"] = 20
 	}
 
-	// Bandwidth
 	switch socInfo["name"] {
 	case "Apple M1 Max":
 		socInfo["cpu_max_bw"] = 250

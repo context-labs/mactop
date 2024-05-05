@@ -21,11 +21,13 @@
 - Disk Activity Read/Write
 - Easy-to-read terminal UI
 - Two layouts: default and alternative
+- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white)
+- Customizable update interval (default is 1000ms)
 - Support for all Apple Silicon models.
 
 ## Install via Homebrew
 
-Help get us on the official Homebrew formulas by giving us a star! [mactop](https://github.com/context-labs/mactop)
+Help get us on the official Homebrew formulas by giving us a star and watching this repo! [mactop](https://github.com/context-labs/mactop)
 
 ```bash
 brew tap context-labs/mactop https://github.com/context-labs/mactop
@@ -37,6 +39,16 @@ brew install mactop
 
 ```bash
 sudo mactop
+```
+
+## Updating via Homebrew
+
+```bash
+brew update
+```
+
+```bash
+brew upgrade mactop
 ```
 
 ## Installation
@@ -70,10 +82,36 @@ sudo ./mactop
 
 `sudo` is required to run `mactop`
 
-Use the following keys to interact with the application:
+Example with flags
+```bash
+sudo mactop --interval 1000 --color green
+```
+
+## mactop Flags
+
+- `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
+- `--color` or `-c`: Set the UI color. Default is white. 
+Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)
+- `--version` or `-v`: Print the version of mactop.
+- `--help` or `-h`: Show a help message about these flags and how to run mactop.
+
+## mactop Commands
+Use the following keys to interact with the application while its running:
 - `q`: Quit the application.
 - `r`: Refresh the UI data manually.
 - `l`: Toggle the current layout.
+
+## Example Theme (Green) Screenshot (sudo mactop -c green)
+
+![mactop theme](screenshot3.png)
+
+## Confirmed tested working M series chips
+
+- M1
+- M1 Max
+- M1 Ultra
+
+(If you have a confirmed working M series chip that is not listed, please open an issue!)
 
 ## Contributing
 
@@ -101,6 +139,10 @@ Distributed under the MIT License. See `LICENSE` for more information.
 Carsen Klock - [@carsenklock](https://twitter.com/carsenklock)
 
 Project Link: [https://github.com/context-labs/mactop](https://github.com/context-labs/mactop)
+
+## Disclaimer
+
+This tool is not officially supported by Apple. It is provided as is, and may not work as expected. Use at your own risk.
 
 ## Acknowledgements
 
