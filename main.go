@@ -315,6 +315,37 @@ func main() {
 		ui.Theme.Paragraph.Text.Fg = color
 		ui.Theme.BarChart.Bars = []ui.Color{color}
 		ui.Theme.Gauge.Label.Fg = color
+		ui.Theme.Gauge.Bar = color
+		logfile, err := setupLogfile()
+		if err != nil {
+			stderrLogger.Fatalf("failed to setup log file: %v", err)
+		}
+		defer logfile.Close()
+
+		if err := ui.Init(); err != nil {
+			stderrLogger.Fatalf("failed to initialize termui: %v", err)
+		}
+		defer ui.Close()
+		StderrToLogfile(logfile)
+		setupUI()
+		cpu1Gauge.BarColor = color
+		cpu2Gauge.BarColor = color
+		aneGauge.BarColor = color
+		gpuGauge.BarColor = color
+		memoryGauge.BarColor = color
+	} else {
+		logfile, err := setupLogfile()
+		if err != nil {
+			stderrLogger.Fatalf("failed to setup log file: %v", err)
+		}
+		defer logfile.Close()
+
+		if err := ui.Init(); err != nil {
+			stderrLogger.Fatalf("failed to initialize termui: %v", err)
+		}
+		defer ui.Close()
+		StderrToLogfile(logfile)
+		setupUI()
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "--interval" || len(os.Args) > 1 && os.Args[1] == "-i" {
@@ -325,20 +356,6 @@ func main() {
 		}
 		updateInterval = interval
 	}
-
-	logfile, err := setupLogfile()
-	if err != nil {
-		stderrLogger.Fatalf("failed to setup log file: %v", err)
-	}
-	defer logfile.Close()
-
-	if err := ui.Init(); err != nil {
-		stderrLogger.Fatalf("failed to initialize termui: %v", err)
-	}
-	defer ui.Close()
-
-	StderrToLogfile(logfile)
-	setupUI() // Initialize UI components and layout
 	setupGrid()
 
 	termWidth, termHeight := ui.TerminalDimensions()
