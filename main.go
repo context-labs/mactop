@@ -1,10 +1,6 @@
 // Copyright (c) 2024 Carsen Klock under MIT License
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang!
-//                _
-//  _ __  __ _ __| |_ ___ _ __
-// | '  \/ _` / _|  _/ _ \ '_ \
-// |_|_|_\__,_\__|\__\___/ .__/
-//  					 |_|
+// github.com/context-labs/mactop
 
 package main
 
