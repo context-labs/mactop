@@ -110,8 +110,11 @@ Use the following keys to interact with the application while its running:
 - M1
 - M1 Max
 - M1 Ultra
+- M2
+- M3
+- M3 Max
 
-(If you have a confirmed working M series chip that is not listed, please open an issue!)
+(If you have a confirmed working M series chip that is not listed, please open an issue, so we may add it here!)
 
 ## Contributing
 
