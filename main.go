@@ -1,7 +1,6 @@
 // Copyright (c) 2024 Carsen Klock under MIT License
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang!
 // github.com/context-labs/mactop
-
 package main
 
 import (
@@ -25,39 +24,13 @@ import (
 )
 
 type CPUMetrics struct {
-	EClusterActive   int
-	EClusterFreqMHz  int
-	PClusterActive   int
-	PClusterFreqMHz  int
-	ECores           []int
-	PCores           []int
-	ANEW             float64
-	CPUW             float64
-	GPUW             float64
-	PackageW         float64
-	E0ClusterActive  int
-	E0ClusterFreqMHz int
-	E1ClusterActive  int
-	E1ClusterFreqMHz int
-	P0ClusterActive  int
-	P0ClusterFreqMHz int
-	P1ClusterActive  int
-	P1ClusterFreqMHz int
-	P2ClusterActive  int
-	P2ClusterFreqMHz int
-	P3ClusterActive  int
-	P3ClusterFreqMHz int
+	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz                                                                                                                                                 int
+	ECores, PCores                                                                                                                                                                                                   []int
+	ANEW, CPUW, GPUW, PackageW                                                                                                                                                                                       float64
+	E0ClusterActive, E0ClusterFreqMHz, E1ClusterActive, E1ClusterFreqMHz, P0ClusterActive, P0ClusterFreqMHz, P1ClusterActive, P1ClusterFreqMHz, P2ClusterActive, P2ClusterFreqMHz, P3ClusterActive, P3ClusterFreqMHz int
 }
 type NetDiskMetrics struct {
-	OutPacketsPerSec float64
-	OutBytesPerSec   float64
-	InPacketsPerSec  float64
-	InBytesPerSec    float64
-
-	ReadOpsPerSec     float64
-	WriteOpsPerSec    float64
-	ReadKBytesPerSec  float64
-	WriteKBytesPerSec float64
+	OutPacketsPerSec, OutBytesPerSec, InPacketsPerSec, InBytesPerSec, ReadOpsPerSec, WriteOpsPerSec, ReadKBytesPerSec, WriteKBytesPerSec float64
 }
 
 type GPUMetrics struct {
@@ -72,11 +45,7 @@ type ProcessMetrics struct {
 }
 
 type MemoryMetrics struct {
-	Total     uint64
-	Used      uint64
-	Available uint64
-	SwapTotal uint64
-	SwapUsed  uint64
+	Total, Used, Available, SwapTotal, SwapUsed uint64
 }
 
 var (
@@ -85,25 +54,22 @@ var (
 	memoryGauge                                     *w.Gauge
 	modelText, PowerChart, NetworkInfo, ProcessInfo *w.Paragraph
 	grid                                            *ui.Grid
-
-	powerValues       []float64
-	lastUpdateTime    time.Time
-	stderrLogger      = log.New(os.Stderr, "", 0)
-	currentGridLayout = "default"
-	updateInterval    = 1000
+	powerValues                                     []float64
+	lastUpdateTime                                  time.Time
+	stderrLogger                                    = log.New(os.Stderr, "", 0)
+	currentGridLayout                               = "default"
+	updateInterval                                  = 1000
 )
 
 func setupUI() {
-
 	appleSiliconModel := getSOCInfo()
 	modelText = w.NewParagraph()
 	modelText.Title = "Apple Silicon"
-
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
 		modelName = "Unknown Model"
 	}
-	eCoreCount, ok := appleSiliconModel["e_core_count"].(int) // Ensure the type assertion is correct as per what getSOCInfo() stores
+	eCoreCount, ok := appleSiliconModel["e_core_count"].(int)
 	if !ok {
 		eCoreCount = 0 // Default or error value
 	}
@@ -115,7 +81,6 @@ func setupUI() {
 	if !ok {
 		gpuCoreCount = "?"
 	}
-
 	modelText.Text = fmt.Sprintf("%s\nTotal Cores: %d\nE-Cores: %d\nP-Cores: %d\nGPU Cores: %s",
 		modelName,
 		eCoreCount+pCoreCount,
@@ -169,12 +134,10 @@ func setupUI() {
 	TotalPowerChart.NumFormatter = func(num float64) string {
 		return ""
 	}
-
 	memoryGauge = w.NewGauge()
 	memoryGauge.Title = "Memory Usage"
 	memoryGauge.Percent = 0
 	memoryGauge.BarColor = ui.ColorCyan
-
 }
 
 func setupGrid() {
@@ -225,11 +188,10 @@ func switchGridLayout() {
 	} else {
 		ui.Clear()
 		newGrid := ui.NewGrid()
-
 		newGrid.Set(
-			ui.NewRow(1.0/2, // This row now takes half the height of the grid
+			ui.NewRow(1.0/2,
 				ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
-				ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, aneGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
+				ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, aneGauge))),
 			),
 			ui.NewRow(1.0/4,
 				ui.NewCol(1.0/4, modelText),
@@ -254,38 +216,74 @@ func StderrToLogfile(logfile *os.File) {
 }
 
 func main() {
-
-	if len(os.Args) > 1 && os.Args[1] == "--help" || len(os.Args) > 1 && os.Args[1] == "-h" {
-		fmt.Println("Usage: mactop [--help] [--version] [--interval]")
-		fmt.Println("--help: Show this help message")
-		fmt.Println("--version: Show the version of mactop")
-		fmt.Println("--interval: Set the powermetrics update interval in milliseconds. Default is 1000.")
-		fmt.Println("--color: Set the UI color. Default is white. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)")
-		fmt.Println("You must use sudo to run mactop, as powermetrics requires root privileges.")
-		fmt.Println("For more information, see https://github.com/context-labs/mactop")
-		os.Exit(0)
+	var (
+		colorName             string
+		interval              int
+		err                   error
+		setColor, setInterval bool
+	)
+	version := "v0.1.6"
+	for i := 1; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--help", "-h":
+			fmt.Println("Usage: mactop [--help] [--version] [--interval] [--color]")
+			fmt.Println("--help: Show this help message")
+			fmt.Println("--version: Show the version of mactop")
+			fmt.Println("--interval: Set the powermetrics update interval in milliseconds. Default is 1000.")
+			fmt.Println("--color: Set the UI color. Default is white. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)")
+			fmt.Println("You must use sudo to run mactop, as powermetrics requires root privileges.")
+			fmt.Println("For more information, see https://github.com/context-labs/mactop")
+			os.Exit(0)
+		case "--version", "-v":
+			fmt.Println("mactop version:", version)
+			os.Exit(0)
+		case "--test", "-t":
+			if i+1 < len(os.Args) {
+				testInput := os.Args[i+1]
+				fmt.Printf("Test input received: %s\n", testInput)
+				os.Exit(0)
+			}
+		case "--color", "-c":
+			if i+1 < len(os.Args) {
+				colorName = strings.ToLower(os.Args[i+1])
+				setColor = true
+				i++
+			} else {
+				fmt.Println("Error: --color flag requires a color value")
+				os.Exit(1)
+			}
+		case "--interval", "-i":
+			if i+1 < len(os.Args) {
+				interval, err = strconv.Atoi(os.Args[i+1])
+				if err != nil {
+					fmt.Println("Invalid interval:", err)
+					os.Exit(1)
+				}
+				setInterval = true
+				i++
+			} else {
+				fmt.Println("Error: --interval flag requires an interval value")
+				os.Exit(1)
+			}
+		}
 	}
-
-	version := "v0.1.5"
-	if len(os.Args) > 1 && os.Args[1] == "--version" || len(os.Args) > 1 && os.Args[1] == "-v" {
-		fmt.Println("mactop version:", version)
-		os.Exit(0)
-	}
-
-	if len(os.Args) > 2 && os.Args[1] == "--test" {
-		testInput := os.Args[2]
-		fmt.Printf("Test input received: %s\n", testInput)
-		os.Exit(0)
-	}
-
 	if os.Geteuid() != 0 {
 		fmt.Println("Welcome to mactop! Please try again and run mactop with sudo privileges!")
 		fmt.Println("Usage: sudo mactop")
 		os.Exit(1)
 	}
+	logfile, err := setupLogfile()
+	if err != nil {
+		stderrLogger.Fatalf("failed to setup log file: %v", err)
+	}
+	defer logfile.Close()
 
-	if len(os.Args) > 2 && os.Args[1] == "--color" || len(os.Args) > 2 && os.Args[1] == "-c" {
-		colorName := strings.ToLower(os.Args[2])
+	if err := ui.Init(); err != nil {
+		stderrLogger.Fatalf("failed to initialize termui: %v", err)
+	}
+	defer ui.Close()
+	StderrToLogfile(logfile)
+	if setColor {
 		var color ui.Color
 		switch colorName {
 		case "green":
@@ -312,17 +310,6 @@ func main() {
 		ui.Theme.BarChart.Bars = []ui.Color{color}
 		ui.Theme.Gauge.Label.Fg = color
 		ui.Theme.Gauge.Bar = color
-		logfile, err := setupLogfile()
-		if err != nil {
-			stderrLogger.Fatalf("failed to setup log file: %v", err)
-		}
-		defer logfile.Close()
-
-		if err := ui.Init(); err != nil {
-			stderrLogger.Fatalf("failed to initialize termui: %v", err)
-		}
-		defer ui.Close()
-		StderrToLogfile(logfile)
 		setupUI()
 		cpu1Gauge.BarColor = color
 		cpu2Gauge.BarColor = color
@@ -330,26 +317,9 @@ func main() {
 		gpuGauge.BarColor = color
 		memoryGauge.BarColor = color
 	} else {
-		logfile, err := setupLogfile()
-		if err != nil {
-			stderrLogger.Fatalf("failed to setup log file: %v", err)
-		}
-		defer logfile.Close()
-
-		if err := ui.Init(); err != nil {
-			stderrLogger.Fatalf("failed to initialize termui: %v", err)
-		}
-		defer ui.Close()
-		StderrToLogfile(logfile)
 		setupUI()
 	}
-
-	if len(os.Args) > 1 && os.Args[1] == "--interval" || len(os.Args) > 1 && os.Args[1] == "-i" {
-		interval, err := strconv.Atoi(os.Args[2])
-		if err != nil {
-			fmt.Println("Invalid interval:", err)
-			os.Exit(1)
-		}
+	if setInterval {
 		updateInterval = interval
 	}
 	setupGrid()
@@ -367,7 +337,8 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan, processMetricsChan)
+	appleSiliconModel := getSOCInfo()
+	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan, processMetricsChan, appleSiliconModel["name"].(string))
 	lastUpdateTime = time.Now()
 	go func() {
 		for {
@@ -393,7 +364,6 @@ func main() {
 			}
 		}
 	}()
-
 	uiEvents := ui.PollEvents()
 	for {
 		select {
@@ -443,7 +413,7 @@ func setupLogfile() (*os.File, error) {
 	return logfile, nil
 }
 
-func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetricsChan chan GPUMetrics, netdiskMetricsChan chan NetDiskMetrics, processMetricsChan chan []ProcessMetrics) {
+func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetricsChan chan GPUMetrics, netdiskMetricsChan chan NetDiskMetrics, processMetricsChan chan []ProcessMetrics, modelName string) {
 	var cpuMetrics CPUMetrics
 	var gpuMetrics GPUMetrics
 	var netdiskMetrics NetDiskMetrics
@@ -453,11 +423,9 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	if err != nil {
 		stderrLogger.Fatalf("failed to get stdout pipe: %v", err)
 	}
-
 	if err := cmd.Start(); err != nil {
 		stderrLogger.Fatalf("failed to start command: %v", err)
 	}
-
 	scanner := bufio.NewScanner(stdout)
 	go func() {
 		for {
@@ -469,7 +437,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			default:
 				if scanner.Scan() {
 					line := scanner.Text()
-					cpuMetrics = parseCPUMetrics(line, cpuMetrics)
+					cpuMetrics = parseCPUMetrics(line, cpuMetrics, modelName)
 					gpuMetrics = parseGPUMetrics(line, gpuMetrics)
 					netdiskMetrics = parseActivityMetrics(line, netdiskMetrics)
 					processMetrics = parseProcessMetrics(line, processMetrics)
@@ -488,7 +456,6 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			}
 		}
 	}()
-
 	if err := cmd.Wait(); err != nil {
 		stderrLogger.Fatalf("command failed: %v", err)
 	}
@@ -522,15 +489,12 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	aneUtil := int(cpuMetrics.ANEW * 100 / 8.0)
 	aneGauge.Title = fmt.Sprintf("ANE Usage: %d%% @ %.1f W", aneUtil, cpuMetrics.ANEW)
 	aneGauge.Percent = aneUtil
-
 	TotalPowerChart.Title = fmt.Sprintf("%.1f W Total Power", cpuMetrics.PackageW)
 	PowerChart.Title = fmt.Sprintf("%.1f W CPU - %.1f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
 	PowerChart.Text = fmt.Sprintf("CPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
-
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
-
 	ui.Render(grid)
 	ui.Render(cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge, memoryGauge, modelText, PowerChart)
 }
@@ -594,166 +558,238 @@ func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetri
 	inRegex := regexp.MustCompile(`in:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
 	outMatches := outRegex.FindStringSubmatch(powermetricsOutput)
 	inMatches := inRegex.FindStringSubmatch(powermetricsOutput)
-
 	if len(outMatches) == 3 {
 		netdiskMetrics.OutPacketsPerSec, _ = strconv.ParseFloat(outMatches[1], 64)
 		netdiskMetrics.OutBytesPerSec, _ = strconv.ParseFloat(outMatches[2], 64)
 	}
-
 	if len(inMatches) == 3 {
 		netdiskMetrics.InPacketsPerSec, _ = strconv.ParseFloat(inMatches[1], 64)
 		netdiskMetrics.InBytesPerSec, _ = strconv.ParseFloat(inMatches[2], 64)
 	}
-
 	readRegex := regexp.MustCompile(`read:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
 	writeRegex := regexp.MustCompile(`write:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
 	readMatches := readRegex.FindStringSubmatch(powermetricsOutput)
 	writeMatches := writeRegex.FindStringSubmatch(powermetricsOutput)
-
 	if len(readMatches) == 3 {
 		netdiskMetrics.ReadOpsPerSec, _ = strconv.ParseFloat(readMatches[1], 64)
 		netdiskMetrics.ReadKBytesPerSec, _ = strconv.ParseFloat(readMatches[2], 64)
 	}
-
 	if len(writeMatches) == 3 {
 		netdiskMetrics.WriteOpsPerSec, _ = strconv.ParseFloat(writeMatches[1], 64)
 		netdiskMetrics.WriteKBytesPerSec, _ = strconv.ParseFloat(writeMatches[2], 64)
 	}
-
 	return netdiskMetrics
 }
 
-func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetrics {
+func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName string) CPUMetrics {
 	lines := strings.Split(powermetricsOutput, "\n")
 	eCores := []int{}
 	pCores := []int{}
-	eClusterActiveTotal := 0
-	eClusterCount := 0
-	pClusterActiveTotal := 0
-	pClusterCount := 0
-	eClusterFreqTotal := 0
-	pClusterFreqTotal := 0
+	var eClusterActiveSum, pClusterActiveSum, eClusterFreqSum, pClusterFreqSum float64
+	var eClusterCount, pClusterCount, eClusterActiveTotal, pClusterActiveTotal, eClusterFreqTotal, pClusterFreqTotal int
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
+	if modelName == "Apple M3 Max" { // For the M3 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
+		for _, line := range lines {
 
-	for _, line := range lines {
-		residencyMatches := residencyRe.FindStringSubmatch(line)
-		frequencyMatches := frequencyRe.FindStringSubmatch(line)
-
-		if residencyMatches != nil {
-			cluster := residencyMatches[1]
-			percent, _ := strconv.ParseFloat(residencyMatches[2], 64)
-			switch cluster {
-			case "E0-Cluster":
-				cpuMetrics.E0ClusterActive = int(percent)
-			case "E1-Cluster":
-				cpuMetrics.E1ClusterActive = int(percent)
-			case "P0-Cluster":
-				cpuMetrics.P0ClusterActive = int(percent)
-			case "P1-Cluster":
-				cpuMetrics.P1ClusterActive = int(percent)
-			case "P2-Cluster":
-				cpuMetrics.P2ClusterActive = int(percent)
-			case "P3-Cluster":
-				cpuMetrics.P3ClusterActive = int(percent)
-			}
-			if strings.HasPrefix(cluster, "E") {
-				eClusterActiveTotal += int(percent)
-				eClusterCount++
-			} else if strings.HasPrefix(cluster, "P") {
-				pClusterActiveTotal += int(percent)
-				pClusterCount++
-				cpuMetrics.PClusterActive = pClusterActiveTotal / pClusterCount
-			}
-		}
-
-		if frequencyMatches != nil {
-			cluster := frequencyMatches[1]
-			freqMHz, _ := strconv.Atoi(frequencyMatches[2])
-			switch cluster {
-			case "E0-Cluster":
-				cpuMetrics.E0ClusterFreqMHz = freqMHz
-			case "E1-Cluster":
-				cpuMetrics.E1ClusterFreqMHz = freqMHz
-			case "P0-Cluster":
-				cpuMetrics.P0ClusterFreqMHz = freqMHz
-			case "P1-Cluster":
-				cpuMetrics.P1ClusterFreqMHz = freqMHz
-			case "P2-Cluster":
-				cpuMetrics.P2ClusterFreqMHz = freqMHz
-			case "P3-Cluster":
-				cpuMetrics.P3ClusterFreqMHz = freqMHz
-			}
-			if strings.HasPrefix(cluster, "E") {
-				eClusterFreqTotal += int(freqMHz)
-				cpuMetrics.EClusterFreqMHz = eClusterFreqTotal
-			} else if strings.HasPrefix(cluster, "P") {
-				pClusterFreqTotal += int(freqMHz)
-				cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
-			}
-		}
-
-		if strings.Contains(line, "CPU ") && strings.Contains(line, "frequency") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				core, _ := strconv.Atoi(strings.TrimPrefix(fields[1], "CPU"))
-				if strings.Contains(line, "E-Cluster") {
-					eCores = append(eCores, core)
-				} else if strings.Contains(line, "P-Cluster") {
-					pCores = append(pCores, core)
+			for i := 0; i <= 15; i++ {
+				re := regexp.MustCompile(`CPU ` + strconv.Itoa(i) + ` active residency:\s+(\d+\.\d+)%`)
+				matches := re.FindStringSubmatch(powermetricsOutput)
+				if len(matches) > 1 {
+					activeResidency, _ := strconv.ParseFloat(matches[1], 64)
+					if i <= 3 {
+						eClusterActiveSum += activeResidency
+						eClusterCount++
+					} else {
+						pClusterActiveSum += activeResidency
+						pClusterCount++
+					}
 				}
 			}
-		} else if strings.Contains(line, "ANE Power") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				cpuMetrics.ANEW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
-				cpuMetrics.ANEW /= 1000 // Convert mW to W
+			for i := 0; i <= 15; i++ {
+				fre := regexp.MustCompile(`^CPU\s+` + strconv.Itoa(i) + `\s+frequency:\s+(\d+)\s+MHz$`)
+				matches := fre.FindStringSubmatch(powermetricsOutput)
+				if len(matches) > 1 {
+					activeFreq, _ := strconv.ParseFloat(matches[1], 64)
+					if i <= 3 {
+						eClusterFreqSum += activeFreq
+						eClusterCount++
+					} else {
+						pClusterFreqSum += activeFreq
+						pClusterCount++
+					}
+				}
 			}
-		} else if strings.Contains(line, "CPU Power") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				cpuMetrics.CPUW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
-				cpuMetrics.CPUW /= 1000 // Convert mW to W
+
+			if eClusterCount > 0 && eClusterActiveSum > 0.0 && eClusterActiveSum < 100.0 && eClusterActiveSum != 0 {
+				cpuMetrics.EClusterActive = int(eClusterActiveSum / float64(eClusterCount))
 			}
-		} else if strings.Contains(line, "GPU Power") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				cpuMetrics.GPUW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
-				cpuMetrics.GPUW /= 1000 // Convert mW to W
+			if pClusterCount > 0 && pClusterActiveSum > 0.0 && pClusterActiveSum < 100.0 && pClusterActiveSum != 0 {
+				cpuMetrics.PClusterActive = int(pClusterActiveSum / float64(pClusterCount))
 			}
-		} else if strings.Contains(line, "Combined Power (CPU + GPU + ANE)") {
-			fields := strings.Fields(line)
-			if len(fields) >= 8 {
-				cpuMetrics.PackageW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[7], "mW"), 64)
-				cpuMetrics.PackageW /= 1000 // Convert mW to W
+
+			if eClusterCount > 0 && eClusterFreqSum > 0.0 && eClusterFreqSum != 0 {
+				cpuMetrics.EClusterFreqMHz = int(eClusterFreqSum / float64(eClusterCount))
+			}
+			if pClusterCount > 0 && pClusterFreqSum > 0.0 && pClusterFreqSum != 0 {
+				cpuMetrics.PClusterFreqMHz = int(pClusterFreqSum / float64(pClusterCount))
+			}
+
+			if strings.Contains(line, "CPU ") && strings.Contains(line, "frequency") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					core, _ := strconv.Atoi(strings.TrimPrefix(fields[1], "CPU"))
+					if strings.Contains(line, "E-Cluster") {
+						eCores = append(eCores, core)
+					} else if strings.Contains(line, "P-Cluster") {
+						pCores = append(pCores, core)
+					}
+				}
+			} else if strings.Contains(line, "ANE Power") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					cpuMetrics.ANEW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
+					cpuMetrics.ANEW /= 1000 // Convert mW to W
+				}
+			} else if strings.Contains(line, "CPU Power") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					cpuMetrics.CPUW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
+					cpuMetrics.CPUW /= 1000 // Convert mW to W
+				}
+			} else if strings.Contains(line, "GPU Power") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					cpuMetrics.GPUW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
+					cpuMetrics.GPUW /= 1000 // Convert mW to W
+				}
+			} else if strings.Contains(line, "Combined Power (CPU + GPU + ANE)") {
+				fields := strings.Fields(line)
+				if len(fields) >= 8 {
+					cpuMetrics.PackageW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[7], "mW"), 64)
+					cpuMetrics.PackageW /= 1000 // Convert mW to W
+				}
 			}
 		}
-	}
-
-	cpuMetrics.ECores = eCores
-	cpuMetrics.PCores = pCores
-
-	if cpuMetrics.E1ClusterActive != 0 {
-		// M1 Ultra
-		cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
-		cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
-	}
-	if cpuMetrics.P3ClusterActive != 0 {
-		// M1 Ultra
-		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
-		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
-	} else if cpuMetrics.P1ClusterActive != 0 {
-		// M1/M2/M3 Max/Pro
-		cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
-		cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+		cpuMetrics.ECores = eCores
+		cpuMetrics.PCores = pCores
 	} else {
-		// M1
-		cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
-	}
+		for _, line := range lines {
+			residencyMatches := residencyRe.FindStringSubmatch(line)
+			frequencyMatches := frequencyRe.FindStringSubmatch(line)
 
-	// Calculate average active residency and frequency for E and P clusters
-	if eClusterCount > 0 {
-		cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
+			if residencyMatches != nil {
+				cluster := residencyMatches[1]
+				percent, _ := strconv.ParseFloat(residencyMatches[2], 64)
+				switch cluster {
+				case "E0-Cluster":
+					cpuMetrics.E0ClusterActive = int(percent)
+				case "E1-Cluster":
+					cpuMetrics.E1ClusterActive = int(percent)
+				case "P0-Cluster":
+					cpuMetrics.P0ClusterActive = int(percent)
+				case "P1-Cluster":
+					cpuMetrics.P1ClusterActive = int(percent)
+				case "P2-Cluster":
+					cpuMetrics.P2ClusterActive = int(percent)
+				case "P3-Cluster":
+					cpuMetrics.P3ClusterActive = int(percent)
+				}
+				if strings.HasPrefix(cluster, "E") {
+					eClusterActiveTotal += int(percent)
+					eClusterCount++
+				} else if strings.HasPrefix(cluster, "P") {
+					pClusterActiveTotal += int(percent)
+					pClusterCount++
+					cpuMetrics.PClusterActive = pClusterActiveTotal / pClusterCount
+				}
+			}
+
+			if frequencyMatches != nil {
+				cluster := frequencyMatches[1]
+				freqMHz, _ := strconv.Atoi(frequencyMatches[2])
+				switch cluster {
+				case "E0-Cluster":
+					cpuMetrics.E0ClusterFreqMHz = freqMHz
+				case "E1-Cluster":
+					cpuMetrics.E1ClusterFreqMHz = freqMHz
+				case "P0-Cluster":
+					cpuMetrics.P0ClusterFreqMHz = freqMHz
+				case "P1-Cluster":
+					cpuMetrics.P1ClusterFreqMHz = freqMHz
+				case "P2-Cluster":
+					cpuMetrics.P2ClusterFreqMHz = freqMHz
+				case "P3-Cluster":
+					cpuMetrics.P3ClusterFreqMHz = freqMHz
+				}
+				if strings.HasPrefix(cluster, "E") {
+					eClusterFreqTotal += int(freqMHz)
+					cpuMetrics.EClusterFreqMHz = eClusterFreqTotal
+				} else if strings.HasPrefix(cluster, "P") {
+					pClusterFreqTotal += int(freqMHz)
+					cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
+				}
+			}
+
+			if strings.Contains(line, "CPU ") && strings.Contains(line, "frequency") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					core, _ := strconv.Atoi(strings.TrimPrefix(fields[1], "CPU"))
+					if strings.Contains(line, "E-Cluster") {
+						eCores = append(eCores, core)
+					} else if strings.Contains(line, "P-Cluster") {
+						pCores = append(pCores, core)
+					}
+				}
+			} else if strings.Contains(line, "ANE Power") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					cpuMetrics.ANEW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
+					cpuMetrics.ANEW /= 1000 // Convert mW to W
+				}
+			} else if strings.Contains(line, "CPU Power") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					cpuMetrics.CPUW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
+					cpuMetrics.CPUW /= 1000 // Convert mW to W
+				}
+			} else if strings.Contains(line, "GPU Power") {
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					cpuMetrics.GPUW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "mW"), 64)
+					cpuMetrics.GPUW /= 1000 // Convert mW to W
+				}
+			} else if strings.Contains(line, "Combined Power (CPU + GPU + ANE)") {
+				fields := strings.Fields(line)
+				if len(fields) >= 8 {
+					cpuMetrics.PackageW, _ = strconv.ParseFloat(strings.TrimSuffix(fields[7], "mW"), 64)
+					cpuMetrics.PackageW /= 1000 // Convert mW to W
+				}
+			}
+		}
+
+		cpuMetrics.ECores = eCores
+		cpuMetrics.PCores = pCores
+		if cpuMetrics.E1ClusterActive != 0 {
+			// M1 Ultra
+			cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
+			cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
+		}
+		if cpuMetrics.P3ClusterActive != 0 {
+			// M1 Ultra
+			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
+			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
+		} else if cpuMetrics.P1ClusterActive != 0 {
+			// M1/M2/M3 Max/Pro
+			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
+			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
+		} else {
+			// M1
+			cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
+		}
+		if eClusterCount > 0 { // Calculate average active residency and frequency for E and P clusters
+			cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
+		}
 	}
 
 	return cpuMetrics
@@ -805,9 +841,7 @@ func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetric
 func getSOCInfo() map[string]interface{} {
 	cpuInfoDict := getCPUInfo()
 	coreCountsDict := getCoreCounts()
-
-	var eCoreCounts int
-	var pCoreCounts int
+	var eCoreCounts, pCoreCounts int
 
 	if val, ok := coreCountsDict["hw.perflevel1.logicalcpu"]; ok {
 		eCoreCounts = val
@@ -815,7 +849,6 @@ func getSOCInfo() map[string]interface{} {
 	if val, ok := coreCountsDict["hw.perflevel0.logicalcpu"]; ok {
 		pCoreCounts = val
 	}
-
 	socInfo := map[string]interface{}{
 		"name":           cpuInfoDict["machdep.cpu.brand_string"],
 		"core_count":     cpuInfoDict["machdep.cpu.core_count"],
