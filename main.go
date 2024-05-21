@@ -222,7 +222,7 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.1.6"
+	version := "v0.1.7"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
@@ -589,10 +589,14 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 	var eClusterCount, pClusterCount, eClusterActiveTotal, pClusterActiveTotal, eClusterFreqTotal, pClusterFreqTotal int
 	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
 	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
-	if modelName == "Apple M3 Max" { // For the M3 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
+	if modelName == "Apple M3 Max" || modelName == "Apple M2 Max" { // For the M3/M2 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
 		for _, line := range lines {
 
-			for i := 0; i <= 15; i++ {
+			maxCores := 15 // 16 Cores for M3 Max (4+12)
+			if modelName == "Apple M2 Max" {
+				maxCores = 11 // 12 Cores M2 Max (4+8)
+			}
+			for i := 0; i <= maxCores; i++ {
 				re := regexp.MustCompile(`CPU ` + strconv.Itoa(i) + ` active residency:\s+(\d+\.\d+)%`)
 				matches := re.FindStringSubmatch(powermetricsOutput)
 				if len(matches) > 1 {
@@ -606,7 +610,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 					}
 				}
 			}
-			for i := 0; i <= 15; i++ {
+			for i := 0; i <= maxCores; i++ {
 				fre := regexp.MustCompile(`^CPU\s+` + strconv.Itoa(i) + `\s+frequency:\s+(\d+)\s+MHz$`)
 				matches := fre.FindStringSubmatch(powermetricsOutput)
 				if len(matches) > 1 {
@@ -627,7 +631,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 			if pClusterCount > 0 && pClusterActiveSum > 0.0 && pClusterActiveSum < 100.0 && pClusterActiveSum != 0 {
 				cpuMetrics.PClusterActive = int(pClusterActiveSum / float64(pClusterCount))
 			}
-
 			if eClusterCount > 0 && eClusterFreqSum > 0.0 && eClusterFreqSum != 0 {
 				cpuMetrics.EClusterFreqMHz = int(eClusterFreqSum / float64(eClusterCount))
 			}
@@ -791,7 +794,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 			cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
 		}
 	}
-
 	return cpuMetrics
 }
 
