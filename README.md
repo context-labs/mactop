@@ -27,11 +27,7 @@
 
 ## Install via Homebrew
 
-Help get us on the official Homebrew formulas by giving us a star and watching this repo! [mactop](https://github.com/context-labs/mactop)
-
-```bash
-brew tap context-labs/mactop https://github.com/context-labs/mactop
-```
+You can install [mactop](https://github.com/context-labs/mactop) via Homebrew! https://brew.sh
 
 ```bash
 brew install mactop
