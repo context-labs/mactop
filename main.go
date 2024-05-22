@@ -61,7 +61,17 @@ var (
 	updateInterval                                  = 1000
 )
 
-var dataRegex = regexp.MustCompile(`(?m)^\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+)\s+\d+\.\d+\s+`)
+var (
+	dataRegex   = regexp.MustCompile(`(?m)^\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+)\s+\d+\.\d+\s+`)
+	outRegex    = regexp.MustCompile(`out:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
+	inRegex     = regexp.MustCompile(`in:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
+	readRegex   = regexp.MustCompile(`read:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
+	writeRegex  = regexp.MustCompile(`write:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
+	residencyRe = regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
+	frequencyRe = regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
+	re          = regexp.MustCompile(`GPU\s*(HW)?\s*active\s*(residency|frequency):\s+(\d+\.\d+)%?`)
+	freqRe      = regexp.MustCompile(`(\d+)\s*MHz:\s*(\d+)%`)
+)
 
 func setupUI() {
 	appleSiliconModel := getSOCInfo()
@@ -555,8 +565,7 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 }
 
 func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetrics) NetDiskMetrics {
-	outRegex := regexp.MustCompile(`out:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
-	inRegex := regexp.MustCompile(`in:\s*([\d.]+)\s*packets/s,\s*([\d.]+)\s*bytes/s`)
+
 	outMatches := outRegex.FindStringSubmatch(powermetricsOutput)
 	inMatches := inRegex.FindStringSubmatch(powermetricsOutput)
 	if len(outMatches) == 3 {
@@ -567,8 +576,7 @@ func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetri
 		netdiskMetrics.InPacketsPerSec, _ = strconv.ParseFloat(inMatches[1], 64)
 		netdiskMetrics.InBytesPerSec, _ = strconv.ParseFloat(inMatches[2], 64)
 	}
-	readRegex := regexp.MustCompile(`read:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
-	writeRegex := regexp.MustCompile(`write:\s*([\d.]+)\s*ops/s\s*([\d.]+)\s*KBytes/s`)
+
 	readMatches := readRegex.FindStringSubmatch(powermetricsOutput)
 	writeMatches := writeRegex.FindStringSubmatch(powermetricsOutput)
 	if len(readMatches) == 3 {
@@ -588,8 +596,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 	pCores := []int{}
 	var eClusterActiveSum, pClusterActiveSum, eClusterFreqSum, pClusterFreqSum float64
 	var eClusterCount, pClusterCount, eClusterActiveTotal, pClusterActiveTotal, eClusterFreqTotal, pClusterFreqTotal int
-	residencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active residency:\s+(\d+\.\d+)%`)
-	frequencyRe := regexp.MustCompile(`(\w+-Cluster)\s+HW active frequency:\s+(\d+)\s+MHz`)
+
 	if modelName == "Apple M3 Max" || modelName == "Apple M2 Max" { // For the M3/M2 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
 		for _, line := range lines {
 
@@ -809,8 +816,7 @@ func max(nums ...int) int {
 }
 
 func parseGPUMetrics(powermetricsOutput string, gpuMetrics GPUMetrics) GPUMetrics {
-	re := regexp.MustCompile(`GPU\s*(HW)?\s*active\s*(residency|frequency):\s+(\d+\.\d+)%?`)
-	freqRe := regexp.MustCompile(`(\d+)\s*MHz:\s*(\d+)%`)
+
 	lines := strings.Split(powermetricsOutput, "\n")
 
 	for _, line := range lines {
