@@ -104,10 +104,13 @@ Use the following keys to interact with the application while its running:
 ## Confirmed tested working M series chips
 
 - M1
+- M1 Pro
 - M1 Max
 - M1 Ultra
 - M2
 - M2 Pro
+- M2 Max
+- M2 Ultra
 - M3
 - M3 Pro
 - M3 Max
