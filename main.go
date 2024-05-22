@@ -61,6 +61,8 @@ var (
 	updateInterval                                  = 1000
 )
 
+var dataRegex = regexp.MustCompile(`(?m)^\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+)\s+\d+\.\d+\s+`)
+
 func setupUI() {
 	appleSiliconModel := getSOCInfo()
 	modelText = w.NewParagraph()
@@ -525,7 +527,6 @@ func updateProcessUI(processMetrics []ProcessMetrics) {
 
 func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetrics) []ProcessMetrics {
 	lines := strings.Split(powermetricsOutput, "\n")
-	dataRegex := regexp.MustCompile(`(?m)^\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+)\s+\d+\.\d+\s+`)
 	seen := make(map[int]bool) // Map to track seen process IDs
 	for _, line := range lines {
 		matches := dataRegex.FindStringSubmatch(line)
