@@ -401,10 +401,10 @@ func main() {
 }
 
 func setupLogfile() (*os.File, error) {
-	if err := os.MkdirAll("logs", 0755); err != nil {
+	if err := os.MkdirAll("/var/log", 0755); err != nil {
 		return nil, fmt.Errorf("failed to make the log directory: %v", err)
 	}
-	logfile, err := os.OpenFile("logs/mactop.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
+	logfile, err := os.OpenFile("/var/log/mactop.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %v", err)
 	}
