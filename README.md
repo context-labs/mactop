@@ -27,11 +27,7 @@
 
 ## Install via Homebrew
 
-Help get us on the official Homebrew formulas by giving us a star and watching this repo! [mactop](https://github.com/context-labs/mactop)
-
-```bash
-brew tap context-labs/mactop https://github.com/context-labs/mactop
-```
+You can install [mactop](https://github.com/context-labs/mactop) via Homebrew! https://brew.sh
 
 ```bash
 brew install mactop
@@ -108,10 +104,18 @@ Use the following keys to interact with the application while its running:
 ## Confirmed tested working M series chips
 
 - M1
+- M1 Pro
 - M1 Max
 - M1 Ultra
+- M2
+- M2 Pro
+- M2 Max
+- M2 Ultra
+- M3
+- M3 Pro
+- M3 Max
 
-(If you have a confirmed working M series chip that is not listed, please open an issue!)
+(If you have a confirmed working M series chip that is not listed, please open an issue, so we may add it here!)
 
 ## Contributing
 
