@@ -894,48 +894,6 @@ func getSOCInfo() map[string]interface{} {
 		"gpu_core_count": getGPUCores(),
 	}
 
-	switch socInfo["name"] {
-	case "Apple M1 Max":
-		socInfo["cpu_max_power"] = 30
-		socInfo["gpu_max_power"] = 60
-	case "Apple M1 Pro":
-		socInfo["cpu_max_power"] = 30
-		socInfo["gpu_max_power"] = 30
-	case "Apple M1":
-		socInfo["cpu_max_power"] = 20
-		socInfo["gpu_max_power"] = 20
-	case "Apple M1 Ultra":
-		socInfo["cpu_max_power"] = 60
-		socInfo["gpu_max_power"] = 120
-	case "Apple M2":
-		socInfo["cpu_max_power"] = 25
-		socInfo["gpu_max_power"] = 15
-	default:
-		socInfo["cpu_max_power"] = 20
-		socInfo["gpu_max_power"] = 20
-	}
-
-	switch socInfo["name"] {
-	case "Apple M1 Max":
-		socInfo["cpu_max_bw"] = 250
-		socInfo["gpu_max_bw"] = 400
-	case "Apple M1 Pro":
-		socInfo["cpu_max_bw"] = 200
-		socInfo["gpu_max_bw"] = 200
-	case "Apple M1":
-		socInfo["cpu_max_bw"] = 70
-		socInfo["gpu_max_bw"] = 70
-	case "Apple M1 Ultra":
-		socInfo["cpu_max_bw"] = 500
-		socInfo["gpu_max_bw"] = 800
-	case "Apple M2":
-		socInfo["cpu_max_bw"] = 100
-		socInfo["gpu_max_bw"] = 100
-	default:
-		socInfo["cpu_max_bw"] = 70
-		socInfo["gpu_max_bw"] = 70
-	}
-
 	return socInfo
 }
 
