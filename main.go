@@ -48,6 +48,35 @@ type MemoryMetrics struct {
 	Total, Used, Available, SwapTotal, SwapUsed uint64
 }
 
+type EventThrottler struct {
+	timer       *time.Timer
+	gracePeriod time.Duration
+
+	C chan struct{}
+}
+
+func NewEventThrottler(gracePeriod time.Duration) *EventThrottler {
+	return &EventThrottler{
+		timer:       nil,
+		gracePeriod: gracePeriod,
+		C:           make(chan struct{}, 1),
+	}
+}
+
+func (e *EventThrottler) Notify() {
+	if e.timer != nil {
+		return
+	}
+
+	e.timer = time.AfterFunc(e.gracePeriod, func() {
+		e.timer = nil
+		select {
+		case e.C <- struct{}{}:
+		default:
+		}
+	})
+}
+
 var (
 	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge        *w.Gauge
 	TotalPowerChart                                 *w.BarChart
@@ -173,7 +202,6 @@ func setupGrid() {
 
 func switchGridLayout() {
 	if currentGridLayout == "default" {
-		ui.Clear()
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/2, // This row now takes half the height of the grid
@@ -196,9 +224,7 @@ func switchGridLayout() {
 		newGrid.SetRect(0, 0, termWidth, termHeight)
 		grid = newGrid
 		currentGridLayout = "alternative"
-		ui.Render(grid)
 	} else {
-		ui.Clear()
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/2,
@@ -219,7 +245,6 @@ func switchGridLayout() {
 		newGrid.SetRect(0, 0, termWidth, termHeight)
 		grid = newGrid
 		currentGridLayout = "default"
-		ui.Render(grid)
 	}
 }
 
@@ -352,21 +377,24 @@ func main() {
 	appleSiliconModel := getSOCInfo()
 	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan, processMetricsChan, appleSiliconModel["name"].(string))
 	lastUpdateTime = time.Now()
+	needRender := NewEventThrottler(time.Duration(updateInterval/2) * time.Millisecond)
 	go func() {
 		for {
 			select {
 			case cpuMetrics := <-cpuMetricsChan:
 				updateCPUUI(cpuMetrics)
 				updateTotalPowerChart(cpuMetrics.PackageW)
-				ui.Render(grid)
+				needRender.Notify()
 			case gpuMetrics := <-gpuMetricsChan:
 				updateGPUUI(gpuMetrics)
-				ui.Render(grid)
+				needRender.Notify()
 			case netdiskMetrics := <-netdiskMetricsChan:
 				updateNetDiskUI(netdiskMetrics)
-				ui.Render(grid)
+				needRender.Notify()
 			case processMetrics := <-processMetricsChan:
 				updateProcessUI(processMetrics)
+				needRender.Notify()
+			case <-needRender.C:
 				ui.Render(grid)
 			case <-quit:
 				close(done)
@@ -489,7 +517,6 @@ func updateTotalPowerChart(newPowerValue float64) {
 		}
 		powerValues = nil
 		lastUpdateTime = currentTime
-		ui.Render(TotalPowerChart)
 	}
 }
 
@@ -507,8 +534,6 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
-	ui.Render(grid)
-	ui.Render(cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge, memoryGauge, modelText, PowerChart)
 }
 
 func updateGPUUI(gpuMetrics GPUMetrics) {
@@ -532,7 +557,6 @@ func updateProcessUI(processMetrics []ProcessMetrics) {
 	for _, pm := range processMetrics {
 		ProcessInfo.Text += fmt.Sprintf("%d - %s: %.2f ms/s\n", pm.ID, pm.Name, pm.CPUUsage)
 	}
-	ui.Render(ProcessInfo)
 }
 
 func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetrics) []ProcessMetrics {
