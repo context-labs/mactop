@@ -805,24 +805,24 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 
 		cpuMetrics.ECores = eCores
 		cpuMetrics.PCores = pCores
-		if cpuMetrics.E1ClusterActive != 0 {
-			// M1 Ultra
+		multra, mmax := false, false
+		if cpuMetrics.E1ClusterActive != 0 { // M1 Ultra
 			cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
 			cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
+			multra = true
 		}
-		if cpuMetrics.P3ClusterActive != 0 {
-			// M1 Ultra
+		if cpuMetrics.P3ClusterActive != 0 { // M1 Ultra
 			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
 			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
-		} else if cpuMetrics.P1ClusterActive != 0 {
-			// M1/M2/M3 Max/Pro
+			multra = true
+		} else if cpuMetrics.P1ClusterActive != 0 && !multra { // M1/M2/M3 Max/Pro
 			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
 			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
-		} else {
-			// M1
+			mmax = true
+		} else if !multra && !mmax { // M1
 			cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
 		}
-		if eClusterCount > 0 { // Calculate average active residency and frequency for E and P clusters
+		if eClusterCount > 0 && !multra && !mmax { // Calculate average active residency and frequency for E and P clusters
 			cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
 		}
 	}
