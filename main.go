@@ -758,10 +758,10 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 					cpuMetrics.P3ClusterFreqMHz = freqMHz
 				}
 				if strings.HasPrefix(cluster, "E") {
-					eClusterFreqTotal += int(freqMHz)
+					eClusterFreqTotal += freqMHz
 					cpuMetrics.EClusterFreqMHz = eClusterFreqTotal
 				} else if strings.HasPrefix(cluster, "P") {
-					pClusterFreqTotal += int(freqMHz)
+					pClusterFreqTotal += freqMHz
 					cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
 				}
 			}
