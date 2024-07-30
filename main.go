@@ -215,7 +215,6 @@ func switchGridLayout() {
 		newGrid.Set(
 			ui.NewRow(1.0/2, // This row now takes half the height of the grid
 				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), // ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
-
 				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)), // ProcessInfo spans this entire column
 			),
 			ui.NewRow(1.0/4,
