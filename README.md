@@ -95,7 +95,8 @@ Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-
 Use the following keys to interact with the application while its running:
 - `q`: Quit the application.
 - `r`: Refresh the UI data manually.
-- `l`: Toggle the current layout.
+- `l`: Toggle the main display's layout.
+- `h`: Toggle the help menu.
 
 ## Example Theme (Green) Screenshot (sudo mactop -c green)
 
