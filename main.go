@@ -78,16 +78,17 @@ func (e *EventThrottler) Notify() {
 }
 
 var (
-	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge        *w.Gauge
-	TotalPowerChart                                 *w.BarChart
-	memoryGauge                                     *w.Gauge
-	modelText, PowerChart, NetworkInfo, ProcessInfo *w.Paragraph
-	grid                                            *ui.Grid
-	powerValues                                     []float64
-	lastUpdateTime                                  time.Time
-	stderrLogger                                    = log.New(os.Stderr, "", 0)
-	currentGridLayout                               = "default"
-	updateInterval                                  = 1000
+	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge                  *w.Gauge
+	TotalPowerChart                                           *w.BarChart
+	memoryGauge                                               *w.Gauge
+	modelText, PowerChart, NetworkInfo, ProcessInfo, helpText *w.Paragraph
+	grid                                                      *ui.Grid
+	powerValues                                               []float64
+	lastUpdateTime                                            time.Time
+	stderrLogger                                              = log.New(os.Stderr, "", 0)
+	currentGridLayout                                         = "default"
+	showHelp                                                  = false
+	updateInterval                                            = 1000
 )
 
 var (
@@ -106,6 +107,8 @@ func setupUI() {
 	appleSiliconModel := getSOCInfo()
 	modelText = w.NewParagraph()
 	modelText.Title = "Apple Silicon"
+	helpText = w.NewParagraph()
+	helpText.Title = "Help Menu"
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
 		modelName = "Unknown Model"
@@ -129,6 +132,12 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
+	helpText.Text = "- r: Refresh the UI data manually\n" +
+		"- l: Toggle the main display's layout\n" +
+		"- h: Toggle this help menu\n" +
+		"- ?: Toggle this help menu\n" +
+		"- q: Quit the application\n" +
+		"- <C-c>: Quit the application"
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
 		modelName,
 		eCoreCount,
@@ -206,6 +215,7 @@ func switchGridLayout() {
 		newGrid.Set(
 			ui.NewRow(1.0/2, // This row now takes half the height of the grid
 				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), // ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
+
 				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)), // ProcessInfo spans this entire column
 			),
 			ui.NewRow(1.0/4,
@@ -245,6 +255,32 @@ func switchGridLayout() {
 		newGrid.SetRect(0, 0, termWidth, termHeight)
 		grid = newGrid
 		currentGridLayout = "default"
+	}
+}
+
+func toggleHelpMenu() {
+	if !showHelp {
+		newGrid := ui.NewGrid()
+		newGrid.Set(
+			ui.NewRow(1.0,
+				ui.NewCol(1.0, helpText),
+			),
+		)
+		termWidth, termHeight := ui.TerminalDimensions()
+		helpTextGridWidth := termWidth / 3
+		helpTextGridHeight := termHeight / 2
+		x := (termWidth - helpTextGridWidth) / 2
+		y := (termHeight - helpTextGridHeight) / 2
+		newGrid.SetRect(x, y, x + helpTextGridWidth, y + helpTextGridHeight)
+		grid = newGrid
+		showHelp = !showHelp
+	} else {
+		currentGridLayout = map[bool]string{
+			true: "alternative",
+			false: "default",
+		}[currentGridLayout == "default"]
+		switchGridLayout()
+		showHelp = !showHelp
 	}
 }
 
@@ -430,6 +466,12 @@ func main() {
 				grid.SetRect(0, 0, termWidth, termHeight)
 				ui.Clear()
 				switchGridLayout()
+				ui.Render(grid)
+			case "h", "?": // "h" or "?" to open help menu
+				termWidth, termHeight := ui.TerminalDimensions()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				ui.Clear()
+				toggleHelpMenu()
 				ui.Render(grid)
 			}
 		case <-done:
