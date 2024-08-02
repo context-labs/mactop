@@ -13,7 +13,7 @@
 
 ## Features
 
-- Apple Silicon Monitor Top written in Go Lang (Around 1,000 lines of code)
+- Apple Silicon Monitor Top written in Go Lang (Under 1,000 lines of code)
 - Real-time CPU and GPU power usage display.
 - Detailed metrics for different CPU clusters (E-Cores and P-Cores).
 - Memory usage and swap information.

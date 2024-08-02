@@ -105,9 +105,8 @@ var (
 
 func setupUI() {
 	appleSiliconModel := getSOCInfo()
-	modelText = w.NewParagraph()
+	modelText, helpText = w.NewParagraph(), w.NewParagraph()
 	modelText.Title = "Apple Silicon"
-	helpText = w.NewParagraph()
 	helpText.Title = "Help Menu"
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
@@ -132,12 +131,7 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
-	helpText.Text = "- r: Refresh the UI data manually\n" +
-		"- l: Toggle the main display's layout\n" +
-		"- h: Toggle this help menu\n" +
-		"- ?: Toggle this help menu\n" +
-		"- q: Quit the application\n" +
-		"- <C-c>: Quit the application"
+	helpText.Text = "- r: Refresh the UI data manually\n- l: Toggle the main display's layout\n- h: Toggle this help menu\n- ?: Toggle this help menu\n- q: Quit the application\n- <C-c>: Quit the application"
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
 		modelName,
 		eCoreCount,
@@ -145,34 +139,20 @@ func setupUI() {
 		gpuCoreCount,
 	)
 
-	cpu1Gauge = w.NewGauge()
-	cpu1Gauge.Title = "E-CPU Usage"
-	cpu1Gauge.Percent = 0
-	cpu1Gauge.BarColor = ui.ColorGreen
+	gauges := []*w.Gauge{
+		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
+	}
+	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "ANE", "Memory Usage"}
+	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
+	for i, gauge := range gauges {
+		gauge.Percent = 0
+		gauge.Title = titles[i]
+		gauge.BarColor = colors[i]
+	}
+	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge, memoryGauge = gauges[0], gauges[1], gauges[2], gauges[3], gauges[4]
 
-	cpu2Gauge = w.NewGauge()
-	cpu2Gauge.Title = "P-CPU Usage"
-	cpu2Gauge.Percent = 0
-	cpu2Gauge.BarColor = ui.ColorYellow
-
-	gpuGauge = w.NewGauge()
-	gpuGauge.Title = "GPU Usage"
-	gpuGauge.Percent = 0
-	gpuGauge.BarColor = ui.ColorMagenta
-
-	aneGauge = w.NewGauge()
-	aneGauge.Title = "ANE"
-	aneGauge.Percent = 0
-	aneGauge.BarColor = ui.ColorBlue
-
-	PowerChart = w.NewParagraph()
-	PowerChart.Title = "Power Usage"
-
-	NetworkInfo = w.NewParagraph()
-	NetworkInfo.Title = "Network & Disk Info"
-
-	ProcessInfo = w.NewParagraph()
-	ProcessInfo.Title = "Process Info"
+	PowerChart, NetworkInfo, ProcessInfo = w.NewParagraph(), w.NewParagraph(), w.NewParagraph()
+	PowerChart.Title, NetworkInfo.Title, ProcessInfo.Title = "Power Usage", "Network & Disk Info", "Process Info"
 
 	TotalPowerChart = w.NewBarChart()
 	TotalPowerChart.Title = "~ W Total Power"
@@ -184,10 +164,6 @@ func setupUI() {
 	TotalPowerChart.NumFormatter = func(num float64) string {
 		return ""
 	}
-	memoryGauge = w.NewGauge()
-	memoryGauge.Title = "Memory Usage"
-	memoryGauge.Percent = 0
-	memoryGauge.BarColor = ui.ColorCyan
 }
 
 func setupGrid() {
@@ -258,7 +234,8 @@ func switchGridLayout() {
 }
 
 func toggleHelpMenu() {
-	if !showHelp {
+	showHelp = !showHelp
+	if showHelp {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0,
@@ -270,16 +247,14 @@ func toggleHelpMenu() {
 		helpTextGridHeight := termHeight / 2
 		x := (termWidth - helpTextGridWidth) / 2
 		y := (termHeight - helpTextGridHeight) / 2
-		newGrid.SetRect(x, y, x + helpTextGridWidth, y + helpTextGridHeight)
+		newGrid.SetRect(x, y, x+helpTextGridWidth, y+helpTextGridHeight)
 		grid = newGrid
-		showHelp = !showHelp
 	} else {
 		currentGridLayout = map[bool]string{
-			true: "alternative",
+			true:  "alternative",
 			false: "default",
 		}[currentGridLayout == "default"]
 		switchGridLayout()
-		showHelp = !showHelp
 	}
 }
 
