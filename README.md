@@ -1,4 +1,4 @@
-# mactop
+# mactopp
 
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/context-labs/mactop/total) ![GitHub Release](https://img.shields.io/github/v/release/context-labs/mactop)
 
