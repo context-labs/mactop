@@ -78,16 +78,17 @@ func (e *EventThrottler) Notify() {
 }
 
 var (
-	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge        *w.Gauge
-	TotalPowerChart                                 *w.BarChart
-	memoryGauge                                     *w.Gauge
-	modelText, PowerChart, NetworkInfo, ProcessInfo *w.Paragraph
-	grid                                            *ui.Grid
-	powerValues                                     []float64
-	lastUpdateTime                                  time.Time
-	stderrLogger                                    = log.New(os.Stderr, "", 0)
-	currentGridLayout                               = "default"
-	updateInterval                                  = 1000
+	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge                  *w.Gauge
+	TotalPowerChart                                           *w.BarChart
+	memoryGauge                                               *w.Gauge
+	modelText, PowerChart, NetworkInfo, ProcessInfo, helpText *w.Paragraph
+	grid                                                      *ui.Grid
+	powerValues                                               []float64
+	lastUpdateTime                                            time.Time
+	stderrLogger                                              = log.New(os.Stderr, "", 0)
+	currentGridLayout                                         = "default"
+	showHelp                                                  = false
+	updateInterval                                            = 1000
 )
 
 var (
@@ -104,8 +105,9 @@ var (
 
 func setupUI() {
 	appleSiliconModel := getSOCInfo()
-	modelText = w.NewParagraph()
+	modelText, helpText = w.NewParagraph(), w.NewParagraph()
 	modelText.Title = "Apple Silicon"
+	helpText.Title = "mactop help menu"
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
 		modelName = "Unknown Model"
@@ -129,6 +131,7 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
+	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'."
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
 		modelName,
 		eCoreCount,
@@ -136,34 +139,20 @@ func setupUI() {
 		gpuCoreCount,
 	)
 
-	cpu1Gauge = w.NewGauge()
-	cpu1Gauge.Title = "E-CPU Usage"
-	cpu1Gauge.Percent = 0
-	cpu1Gauge.BarColor = ui.ColorGreen
+	gauges := []*w.Gauge{
+		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
+	}
+	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "ANE", "Memory Usage"}
+	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
+	for i, gauge := range gauges {
+		gauge.Percent = 0
+		gauge.Title = titles[i]
+		gauge.BarColor = colors[i]
+	}
+	cpu1Gauge, cpu2Gauge, gpuGauge, aneGauge, memoryGauge = gauges[0], gauges[1], gauges[2], gauges[3], gauges[4]
 
-	cpu2Gauge = w.NewGauge()
-	cpu2Gauge.Title = "P-CPU Usage"
-	cpu2Gauge.Percent = 0
-	cpu2Gauge.BarColor = ui.ColorYellow
-
-	gpuGauge = w.NewGauge()
-	gpuGauge.Title = "GPU Usage"
-	gpuGauge.Percent = 0
-	gpuGauge.BarColor = ui.ColorMagenta
-
-	aneGauge = w.NewGauge()
-	aneGauge.Title = "ANE"
-	aneGauge.Percent = 0
-	aneGauge.BarColor = ui.ColorBlue
-
-	PowerChart = w.NewParagraph()
-	PowerChart.Title = "Power Usage"
-
-	NetworkInfo = w.NewParagraph()
-	NetworkInfo.Title = "Network & Disk Info"
-
-	ProcessInfo = w.NewParagraph()
-	ProcessInfo.Title = "Process Info"
+	PowerChart, NetworkInfo, ProcessInfo = w.NewParagraph(), w.NewParagraph(), w.NewParagraph()
+	PowerChart.Title, NetworkInfo.Title, ProcessInfo.Title = "Power Usage", "Network & Disk Info", "Process Info"
 
 	TotalPowerChart = w.NewBarChart()
 	TotalPowerChart.Title = "~ W Total Power"
@@ -175,10 +164,6 @@ func setupUI() {
 	TotalPowerChart.NumFormatter = func(num float64) string {
 		return ""
 	}
-	memoryGauge = w.NewGauge()
-	memoryGauge.Title = "Memory Usage"
-	memoryGauge.Percent = 0
-	memoryGauge.BarColor = ui.ColorCyan
 }
 
 func setupGrid() {
@@ -248,6 +233,33 @@ func switchGridLayout() {
 	}
 }
 
+func toggleHelpMenu() {
+	showHelp = !showHelp
+	if showHelp {
+		newGrid := ui.NewGrid()
+		newGrid.Set(
+			ui.NewRow(1.0,
+				ui.NewCol(1.0, helpText),
+			),
+		)
+		termWidth, termHeight := ui.TerminalDimensions()
+		helpTextGridWidth := termWidth
+		helpTextGridHeight := termHeight
+		x := (termWidth - helpTextGridWidth) / 2
+		y := (termHeight - helpTextGridHeight) / 2
+		newGrid.SetRect(x, y, x+helpTextGridWidth, y+helpTextGridHeight)
+		grid = newGrid
+	} else {
+		currentGridLayout = map[bool]string{
+			true:  "alternative",
+			false: "default",
+		}[currentGridLayout == "default"]
+		switchGridLayout()
+	}
+	ui.Clear()
+	ui.Render(grid)
+}
+
 func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
@@ -259,17 +271,11 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.1.8"
+	version := "v0.1.9"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
-			fmt.Println("Usage: mactop [--help] [--version] [--interval] [--color]")
-			fmt.Println("--help: Show this help message")
-			fmt.Println("--version: Show the version of mactop")
-			fmt.Println("--interval: Set the powermetrics update interval in milliseconds. Default is 1000.")
-			fmt.Println("--color: Set the UI color. Default is white. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)")
-			fmt.Println("You must use sudo to run mactop, as powermetrics requires root privileges.")
-			fmt.Println("For more information, see https://github.com/context-labs/mactop")
+			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nYou must use sudo to run mactop, as powermetrics requires root privileges.\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
 			os.Exit(0)
 		case "--version", "-v":
 			fmt.Println("mactop version:", version)
@@ -430,6 +436,12 @@ func main() {
 				grid.SetRect(0, 0, termWidth, termHeight)
 				ui.Clear()
 				switchGridLayout()
+				ui.Render(grid)
+			case "h", "?": // "h" or "?" to open help menu
+				termWidth, termHeight := ui.TerminalDimensions()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				ui.Clear()
+				toggleHelpMenu()
 				ui.Render(grid)
 			}
 		case <-done:
@@ -758,10 +770,10 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 					cpuMetrics.P3ClusterFreqMHz = freqMHz
 				}
 				if strings.HasPrefix(cluster, "E") {
-					eClusterFreqTotal += int(freqMHz)
+					eClusterFreqTotal += freqMHz
 					cpuMetrics.EClusterFreqMHz = eClusterFreqTotal
 				} else if strings.HasPrefix(cluster, "P") {
-					pClusterFreqTotal += int(freqMHz)
+					pClusterFreqTotal += freqMHz
 					cpuMetrics.PClusterFreqMHz = pClusterFreqTotal
 				}
 			}
@@ -805,24 +817,24 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 
 		cpuMetrics.ECores = eCores
 		cpuMetrics.PCores = pCores
-		if cpuMetrics.E1ClusterActive != 0 {
-			// M1 Ultra
+		multra, mmax := false, false
+		if cpuMetrics.E1ClusterActive != 0 { // M1 Ultra
 			cpuMetrics.EClusterActive = (cpuMetrics.E0ClusterActive + cpuMetrics.E1ClusterActive) / 2
 			cpuMetrics.EClusterFreqMHz = max(cpuMetrics.E0ClusterFreqMHz, cpuMetrics.E1ClusterFreqMHz)
+			multra = true
 		}
-		if cpuMetrics.P3ClusterActive != 0 {
-			// M1 Ultra
+		if cpuMetrics.P3ClusterActive != 0 { // M1 Ultra
 			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
 			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
-		} else if cpuMetrics.P1ClusterActive != 0 {
-			// M1/M2/M3 Max/Pro
+			multra = true
+		} else if cpuMetrics.P1ClusterActive != 0 && !multra { // M1/M2/M3 Max/Pro
 			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
 			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
-		} else {
-			// M1
+			mmax = true
+		} else if !multra && !mmax { // M1
 			cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
 		}
-		if eClusterCount > 0 { // Calculate average active residency and frequency for E and P clusters
+		if eClusterCount > 0 && !multra && !mmax { // Calculate average active residency and frequency for E and P clusters
 			cpuMetrics.EClusterActive = eClusterActiveTotal / eClusterCount
 		}
 	}
