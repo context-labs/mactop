@@ -107,7 +107,7 @@ func setupUI() {
 	appleSiliconModel := getSOCInfo()
 	modelText, helpText = w.NewParagraph(), w.NewParagraph()
 	modelText.Title = "Apple Silicon"
-	helpText.Title = "Help Menu"
+	helpText.Title = "mactop help menu"
 	modelName, ok := appleSiliconModel["name"].(string)
 	if !ok {
 		modelName = "Unknown Model"
@@ -131,7 +131,7 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
-	helpText.Text = "- r: Refresh the UI data manually\n- l: Toggle the main display's layout\n- h: Toggle this help menu\n- ?: Toggle this help menu\n- q: Quit the application\n- <C-c>: Quit the application"
+	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'."
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
 		modelName,
 		eCoreCount,
@@ -243,8 +243,8 @@ func toggleHelpMenu() {
 			),
 		)
 		termWidth, termHeight := ui.TerminalDimensions()
-		helpTextGridWidth := termWidth / 3
-		helpTextGridHeight := termHeight / 2
+		helpTextGridWidth := termWidth
+		helpTextGridHeight := termHeight
 		x := (termWidth - helpTextGridWidth) / 2
 		y := (termHeight - helpTextGridHeight) / 2
 		newGrid.SetRect(x, y, x+helpTextGridWidth, y+helpTextGridHeight)
@@ -256,6 +256,8 @@ func toggleHelpMenu() {
 		}[currentGridLayout == "default"]
 		switchGridLayout()
 	}
+	ui.Clear()
+	ui.Render(grid)
 }
 
 func StderrToLogfile(logfile *os.File) {
@@ -269,17 +271,11 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.1.8"
+	version := "v0.1.9"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
-			fmt.Println("Usage: mactop [--help] [--version] [--interval] [--color]")
-			fmt.Println("--help: Show this help message")
-			fmt.Println("--version: Show the version of mactop")
-			fmt.Println("--interval: Set the powermetrics update interval in milliseconds. Default is 1000.")
-			fmt.Println("--color: Set the UI color. Default is white. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)")
-			fmt.Println("You must use sudo to run mactop, as powermetrics requires root privileges.")
-			fmt.Println("For more information, see https://github.com/context-labs/mactop")
+			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nYou must use sudo to run mactop, as powermetrics requires root privileges.\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
 			os.Exit(0)
 		case "--version", "-v":
 			fmt.Println("mactop version:", version)
