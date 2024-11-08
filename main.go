@@ -539,11 +539,11 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	cpu2Gauge.Title = fmt.Sprintf("P-CPU Usage: %d%% @ %d MHz", cpuMetrics.PClusterActive, cpuMetrics.PClusterFreqMHz)
 	cpu2Gauge.Percent = cpuMetrics.PClusterActive
 	aneUtil := int(cpuMetrics.ANEW * 100 / 8.0)
-	aneGauge.Title = fmt.Sprintf("ANE Usage: %d%% @ %.1f W", aneUtil, cpuMetrics.ANEW)
+	aneGauge.Title = fmt.Sprintf("ANE Usage: %d%% @ %.2f W", aneUtil, cpuMetrics.ANEW)
 	aneGauge.Percent = aneUtil
-	TotalPowerChart.Title = fmt.Sprintf("%.1f W Total Power", cpuMetrics.PackageW)
-	PowerChart.Title = fmt.Sprintf("%.1f W CPU - %.1f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.1f W\nGPU Power: %.1f W\nANE Power: %.1f W\nTotal Power: %.1f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
+	TotalPowerChart.Title = fmt.Sprintf("%.2f W Total Power", cpuMetrics.PackageW)
+	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
+	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nANE Power: %.2f W\nTotal Power: %.2f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.ANEW, cpuMetrics.PackageW)
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
