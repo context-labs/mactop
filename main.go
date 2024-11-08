@@ -1,6 +1,5 @@
 // Copyright (c) 2024 Carsen Klock under MIT License
-// mactop is a simple terminal based Apple Silicon power monitor written in Go Lang!
-// github.com/context-labs/mactop
+// mactop is a simple terminal based Apple Silicon power monitor written in Go Lang! github.com/context-labs/mactop
 package main
 
 import (
@@ -415,7 +414,7 @@ func main() {
 		select {
 		case e := <-uiEvents:
 			switch e.ID {
-			case "q", "<C-c>": // "q" or Ctrl+C to quit
+			case "q", "<C-c>":
 				close(done)
 				ui.Close()
 				os.Exit(0)
@@ -425,19 +424,17 @@ func main() {
 				grid.SetRect(0, 0, payload.Width, payload.Height)
 				ui.Render(grid)
 			case "r":
-				// refresh ui data
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
 				ui.Clear()
 				ui.Render(grid)
 			case "l":
-				// Set the new grid's dimensions to match the terminal size
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
 				ui.Clear()
 				switchGridLayout()
 				ui.Render(grid)
-			case "h", "?": // "h" or "?" to open help menu
+			case "h", "?":
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
 				ui.Clear()
