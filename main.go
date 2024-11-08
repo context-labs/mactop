@@ -271,7 +271,7 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.1.9"
+	version := "v0.2.0"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
@@ -471,6 +471,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	var netdiskMetrics NetDiskMetrics
 	var processMetrics []ProcessMetrics
 	cmd := exec.Command("powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-process-gpu", "--show-process-energy", "--show-initial-usage", "--show-process-netstats", "-i", strconv.Itoa(updateInterval))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stderrLogger.Fatalf("failed to get stdout pipe: %v", err)
@@ -593,7 +594,6 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 			}
 		}
 	}
-
 	sort.Slice(processMetrics, func(i, j int) bool {
 		return processMetrics[i].CPUUsage > processMetrics[j].CPUUsage
 	})
@@ -601,7 +601,6 @@ func parseProcessMetrics(powermetricsOutput string, processMetrics []ProcessMetr
 }
 
 func parseActivityMetrics(powermetricsOutput string, netdiskMetrics NetDiskMetrics) NetDiskMetrics {
-
 	outMatches := outRegex.FindStringSubmatch(powermetricsOutput)
 	inMatches := inRegex.FindStringSubmatch(powermetricsOutput)
 	if len(outMatches) == 3 {
@@ -633,13 +632,12 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 	var eClusterActiveSum, pClusterActiveSum, eClusterFreqSum, pClusterFreqSum float64
 	var eClusterCount, pClusterCount, eClusterActiveTotal, pClusterActiveTotal, eClusterFreqTotal, pClusterFreqTotal int
 
-	if modelName == "Apple M3 Max" || modelName == "Apple M2 Max" { // For the M3/M2 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
+	if modelName == "Apple M3 Max" || modelName == "Apple M2 Max" || modelName == "Apple M4 Max" { // For the M3/M2/M4 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
+		coreCounts := getCoreCounts()
+		maxCoresP := coreCounts["hw.perflevel0.logicalcpu"]
+		maxCoresE := coreCounts["hw.perflevel1.logicalcpu"]
+		maxCores := maxCoresP + maxCoresE // Determine the total number of cores from getCoreCounts()
 		for _, line := range lines {
-
-			maxCores := 15 // 16 Cores for M3 Max (4+12)
-			if modelName == "Apple M2 Max" {
-				maxCores = 11 // 12 Cores M2 Max (4+8)
-			}
 			for i := 0; i <= maxCores; i++ {
 				re := regexp.MustCompile(`CPU ` + strconv.Itoa(i) + ` active residency:\s+(\d+\.\d+)%`)
 				matches := re.FindStringSubmatch(powermetricsOutput)
@@ -827,11 +825,11 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive + cpuMetrics.P2ClusterActive + cpuMetrics.P3ClusterActive) / 4
 			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz, cpuMetrics.P2ClusterFreqMHz, cpuMetrics.P3ClusterFreqMHz)
 			multra = true
-		} else if cpuMetrics.P1ClusterActive != 0 && !multra { // M1/M2/M3 Max/Pro
+		} else if cpuMetrics.P1ClusterActive != 0 && !multra { // M1/M2/M3/M4 Max/Pro
 			cpuMetrics.PClusterActive = (cpuMetrics.P0ClusterActive + cpuMetrics.P1ClusterActive) / 2
 			cpuMetrics.PClusterFreqMHz = max(cpuMetrics.P0ClusterFreqMHz, cpuMetrics.P1ClusterFreqMHz)
 			mmax = true
-		} else if !multra && !mmax { // M1
+		} else if !multra && !mmax { // M1/M2/M3/M4
 			cpuMetrics.PClusterActive = cpuMetrics.PClusterActive + cpuMetrics.P0ClusterActive
 		}
 		if eClusterCount > 0 && !multra && !mmax { // Calculate average active residency and frequency for E and P clusters
@@ -951,7 +949,9 @@ func getCPUInfo() map[string]string {
 }
 
 func getCoreCounts() map[string]int {
-	out, err := exec.Command("sysctl", "hw.perflevel0.logicalcpu", "hw.perflevel1.logicalcpu").Output()
+	cmd := exec.Command("sysctl", "hw.perflevel0.logicalcpu", "hw.perflevel1.logicalcpu")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	out, err := cmd.Output()
 	if err != nil {
 		stderrLogger.Fatalf("failed to execute getCoreCounts() sysctl command: %v", err)
 	}

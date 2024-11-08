@@ -115,6 +115,9 @@ Use the following keys to interact with the application while its running:
 - M3
 - M3 Pro
 - M3 Max
+- M4
+- M4 Pro (In Testing, development branch)
+- M4 Max (In Testing, development branch)
 
 (If you have a confirmed working M series chip that is not listed, please open an issue, so we may add it here!)
 
