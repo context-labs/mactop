@@ -632,7 +632,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 	var eClusterActiveSum, pClusterActiveSum, eClusterFreqSum, pClusterFreqSum float64
 	var eClusterCount, pClusterCount, eClusterActiveTotal, pClusterActiveTotal, eClusterFreqTotal, pClusterFreqTotal int
 
-	if modelName == "Apple M3 Max" || modelName == "Apple M2 Max" || modelName == "Apple M4 Max" { // For the M3/M2/M4 Max, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
+	if modelName == "Apple M3 Max" || modelName == "Apple M2 Max" || modelName == "Apple M4 Max" || modelName == "Apple M1 Max" || modelName == "Apple M4 Pro" || modelName == "Apple M3 Pro" || modelName == "Apple M2 Pro" || modelName == "Apple M1 Pro" { // For the M3/M2/M4 Max/Pro, we need to manually parse the CPU Usage from the powermetrics output (as current bug in Apple's powermetrics)
 		coreCounts := getCoreCounts()
 		maxCoresP := coreCounts["hw.perflevel0.logicalcpu"]
 		maxCoresE := coreCounts["hw.perflevel1.logicalcpu"]
@@ -643,7 +643,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 				matches := re.FindStringSubmatch(powermetricsOutput)
 				if len(matches) > 1 {
 					activeResidency, _ := strconv.ParseFloat(matches[1], 64)
-					if i <= 3 {
+					if i <= maxCoresE {
 						eClusterActiveSum += activeResidency
 						eClusterCount++
 					} else {
@@ -657,7 +657,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics, modelName
 				matches := fre.FindStringSubmatch(powermetricsOutput)
 				if len(matches) > 1 {
 					activeFreq, _ := strconv.ParseFloat(matches[1], 64)
-					if i <= 3 {
+					if i <= maxCoresE {
 						eClusterFreqSum += activeFreq
 						eClusterCount++
 					} else {
