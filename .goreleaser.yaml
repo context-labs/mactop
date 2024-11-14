@@ -1,3 +1,4 @@
+version: 2
 before:
   hooks:
     - go mod tidy
@@ -18,7 +19,6 @@ archives:
     files:
       - LICENSE
       - README.md
-      - "dist/{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}/{{ .ProjectName }}"
 
 checksum:
   name_template: 'checksums.txt'
