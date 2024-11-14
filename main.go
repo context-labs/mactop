@@ -638,6 +638,7 @@ func parseNetDiskMetrics(data map[string]interface{}) NetDiskMetrics {
 
 func getProcessList() []ProcessMetrics {
 	cmd := exec.Command("ps", "aux")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	output, err := cmd.Output()
 	if err != nil {
 		log.Printf("Error getting process list: %v", err)
@@ -707,6 +708,7 @@ func updateGPUUI(gpuMetrics GPUMetrics) {
 
 func getDiskStorage() (total, used, available string) {
 	cmd := exec.Command("df", "-h", "/")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	output, err := cmd.Output()
 	if err != nil {
 		return "N/A", "N/A", "N/A"
