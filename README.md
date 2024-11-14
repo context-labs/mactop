@@ -23,6 +23,9 @@
 - Two layouts: default and alternative
 - Customizable UI color (green, red, blue, cyan, magenta, yellow, and white)
 - Customizable update interval (default is 1000ms)
+- Processes list (sorted by CPU usage)
+- Disk Storage (Used, Total, Available)
+- Party Mode (Randomly cycles through colors)
 - Support for all Apple Silicon models.
 
 ## Install via Homebrew
@@ -95,6 +98,8 @@ Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-
 Use the following keys to interact with the application while its running:
 - `q`: Quit the application.
 - `r`: Refresh the UI data manually.
+- `c`: Cycle through the color themes.
+- `p`: Party Mode (Randomly cycles through colors)
 - `l`: Toggle the main display's layout.
 - `h`: Toggle the help menu.
 
@@ -115,6 +120,9 @@ Use the following keys to interact with the application while its running:
 - M3
 - M3 Pro
 - M3 Max
+- M4
+- M4 Pro
+- M4 Max
 
 (If you have a confirmed working M series chip that is not listed, please open an issue, so we may add it here!)
 
