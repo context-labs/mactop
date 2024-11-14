@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Carsen Klock under MIT License
+// Copyright (c) 2024-2025 Carsen Klock under MIT License
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang! github.com/context-labs/mactop
 package main
 
@@ -24,17 +24,10 @@ import (
 )
 
 type CPUMetrics struct {
-	EClusterActive  int
-	EClusterFreqMHz int
-	PClusterActive  int
-	PClusterFreqMHz int
-	ECores          []int
-	PCores          []int
-	CoreMetrics     map[string]int
-	ANEW            float64
-	CPUW            float64
-	GPUW            float64
-	PackageW        float64
+	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz int
+	ECores, PCores                                                   []int
+	CoreMetrics                                                      map[string]int
+	CPUW, GPUW, PackageW                                             float64
 }
 
 func NewCPUMetrics() CPUMetrics {
@@ -46,32 +39,17 @@ func NewCPUMetrics() CPUMetrics {
 }
 
 type NetDiskMetrics struct {
-	OutPacketsPerSec  float64
-	OutBytesPerSec    float64
-	InPacketsPerSec   float64
-	InBytesPerSec     float64
-	ReadOpsPerSec     float64
-	WriteOpsPerSec    float64
-	ReadKBytesPerSec  float64
-	WriteKBytesPerSec float64
+	OutPacketsPerSec, OutBytesPerSec, InPacketsPerSec, InBytesPerSec, ReadOpsPerSec, WriteOpsPerSec, ReadKBytesPerSec, WriteKBytesPerSec float64
 }
 
 type GPUMetrics struct {
-	FreqMHz int
-	Active  int
+	FreqMHz, Active int
 }
 type ProcessMetrics struct {
-	User    string
-	PID     int
-	CPU     float64
-	Memory  float64
-	VSZ     int64
-	RSS     int64
-	TTY     string
-	State   string
-	Started string
-	Time    string
-	Command string
+	PID                                      int
+	CPU, Memory                              float64
+	VSZ, RSS                                 int64
+	User, TTY, State, Started, Time, Command string
 }
 
 type MemoryMetrics struct {
@@ -118,9 +96,12 @@ var (
 	lastUpdateTime                               time.Time
 	stderrLogger                                 = log.New(os.Stderr, "", 0)
 	currentGridLayout                            = "default"
-	showHelp                                     = false
+	showHelp, partyMode                          = false, false
 	updateInterval                               = 1000
 	done                                         = make(chan struct{})
+	currentColorIndex                            = 0
+	colorOptions                                 = []ui.Color{ui.ColorWhite, ui.ColorGreen, ui.ColorBlue, ui.ColorCyan, ui.ColorMagenta, ui.ColorYellow, ui.ColorRed}
+	partyTicker                                  *time.Ticker
 )
 
 func setupUI() {
@@ -151,7 +132,7 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
-	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'."
+	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- c: Cycle through UI color themes\n- p: Toggle party mode (color cycling)\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'."
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
 		modelName,
 		eCoreCount,
@@ -218,15 +199,19 @@ func switchGridLayout() {
 	if currentGridLayout == "default" {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
-			ui.NewRow(1.0/4, // This row now takes half the height of the grid
-				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), // ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
-				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)), // ProcessInfo spans this entire column
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)),
+				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)),
 			),
-			ui.NewRow(1.0/2,
-				ui.NewCol(3.0/6, gpuGauge),
-				ui.NewCol(3.0/6, processList),
-				// ui.NewCol(1.0/4, PowerChart),
-				// ui.NewCol(1.0/4, TotalPowerChart),
+			ui.NewRow(2.0/4,
+				ui.NewCol(1.0/2,
+					ui.NewRow(1.0/2, gpuGauge),
+					ui.NewRow(1.0/2,
+						ui.NewCol(1.0/2, PowerChart),
+						ui.NewCol(1.0/2, TotalPowerChart),
+					),
+				),
+				ui.NewCol(1.0/2, processList),
 			),
 			ui.NewRow(1.0/4,
 				ui.NewCol(3.0/6, memoryGauge),
@@ -289,6 +274,26 @@ func toggleHelpMenu() {
 	ui.Render(grid)
 }
 
+func togglePartyMode() {
+	partyMode = !partyMode
+	if partyMode {
+		partyTicker = time.NewTicker(500 * time.Millisecond)
+		go func() {
+			for range partyTicker.C {
+				if !partyMode {
+					partyTicker.Stop()
+					return
+				}
+				cycleColors()
+				ui.Clear()
+				ui.Render(grid)
+			}
+		}()
+	} else if partyTicker != nil {
+		partyTicker.Stop()
+	}
+}
+
 func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
@@ -297,10 +302,9 @@ func updateProcessList() {
 	processes := getProcessList()
 	items := make([]string, len(processes))
 	for i, p := range processes {
-		items[i] = fmt.Sprintf("%5d %-8s %5.1f%% %5.1f%% %-40.40s",
+		items[i] = fmt.Sprintf("%5d %-8s %5.1f%% %5.1f%% %-50.50s",
 			p.PID, p.User, p.CPU, p.Memory, p.Command)
 	}
-
 	processList.Rows = items
 	if selectedProcess >= len(items) {
 		selectedProcess = len(items) - 1
@@ -309,6 +313,24 @@ func updateProcessList() {
 		selectedProcess = 0
 	}
 	processList.SelectedRow = selectedProcess
+}
+
+func cycleColors() {
+	currentColorIndex = (currentColorIndex + 1) % len(colorOptions)
+	color := colorOptions[currentColorIndex]
+
+	ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
+	ui.Theme.BarChart.Bars = []ui.Color{color}
+
+	cpu1Gauge.BarColor, cpu2Gauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color, color
+	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle, TotalPowerChart.BarColors = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color), []ui.Color{color}
+	processList.SelectedRowStyle, modelText.TextStyle, helpText.TextStyle = ui.NewStyle(ui.ColorBlack, color), ui.NewStyle(color), ui.NewStyle(color)
+
+	cpu1Gauge.BorderStyle.Fg, cpu1Gauge.TitleStyle.Fg, cpu2Gauge.BorderStyle.Fg, cpu2Gauge.TitleStyle.Fg = color, color, color, color
+	gpuGauge.BorderStyle.Fg, gpuGauge.TitleStyle.Fg, memoryGauge.BorderStyle.Fg, memoryGauge.TitleStyle.Fg = color, color, color, color
+	processList.BorderStyle.Fg, processList.TitleStyle.Fg, NetworkInfo.BorderStyle.Fg, NetworkInfo.TitleStyle.Fg = color, color, color, color
+	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg, TotalPowerChart.BorderStyle.Fg, TotalPowerChart.TitleStyle.Fg = color, color, color, color
+	modelText.BorderStyle.Fg, modelText.TitleStyle.Fg, helpText.BorderStyle.Fg, helpText.TitleStyle.Fg = color, color, color, color
 }
 
 func main() {
@@ -394,17 +416,10 @@ func main() {
 			stderrLogger.Printf("Unsupported color: %s. Using default color.\n", colorName)
 			color = ui.ColorWhite
 		}
-		ui.Theme.Block.Title.Fg = color
-		ui.Theme.Block.Border.Fg = color
-		ui.Theme.Paragraph.Text.Fg = color
+		ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 		ui.Theme.BarChart.Bars = []ui.Color{color}
-		ui.Theme.Gauge.Label.Fg = color
-		ui.Theme.Gauge.Bar = color
 		setupUI()
-		cpu1Gauge.BarColor = color
-		cpu2Gauge.BarColor = color
-		gpuGauge.BarColor = color
-		memoryGauge.BarColor = color
+		cpu1Gauge.BarColor, cpu2Gauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color, color
 		processList.TextStyle = ui.NewStyle(color)
 		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
 	} else {
@@ -414,15 +429,12 @@ func main() {
 		updateInterval = interval
 	}
 	setupGrid()
-
 	termWidth, termHeight := ui.TerminalDimensions()
 	grid.SetRect(0, 0, termWidth, termHeight)
-	cpuMetricsChan := make(chan CPUMetrics)
-	gpuMetricsChan := make(chan GPUMetrics)
-	netdiskMetricsChan := make(chan NetDiskMetrics)
-
+	cpuMetricsChan := make(chan CPUMetrics, 1)
+	gpuMetricsChan := make(chan GPUMetrics, 1)
+	netdiskMetricsChan := make(chan NetDiskMetrics, 1)
 	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan)
-
 	go func() {
 		ticker := time.NewTicker(time.Duration(updateInterval/2) * time.Millisecond)
 		defer ticker.Stop()
@@ -444,11 +456,14 @@ func main() {
 		}
 	}()
 	ui.Render(grid)
-
 	done := make(chan struct{})
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-
+	defer func() {
+		if partyTicker != nil {
+			partyTicker.Stop()
+		}
+	}()
 	lastUpdateTime = time.Now()
 	uiEvents := ui.PollEvents()
 	for {
@@ -467,6 +482,14 @@ func main() {
 			case "r":
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
+				ui.Clear()
+				ui.Render(grid)
+			case "p":
+				togglePartyMode()
+			case "c":
+				termWidth, termHeight := ui.TerminalDimensions()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				cycleColors()
 				ui.Clear()
 				ui.Render(grid)
 			case "l":
@@ -514,12 +537,10 @@ func setupLogfile() (*os.File, error) {
 }
 
 func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetricsChan chan GPUMetrics, netdiskMetricsChan chan NetDiskMetrics) {
-	cmd := exec.Command("sudo", "powermetrics",
-		"--samplers", "cpu_power,gpu_power,thermal,network,disk",
-		"--show-initial-usage",
-		"-f", "plist",
-		"-i", strconv.Itoa(updateInterval))
-
+	cpumetricsChan <- CPUMetrics{}
+	gpumetricsChan <- GPUMetrics{}
+	netdiskMetricsChan <- NetDiskMetrics{}
+	cmd := exec.Command("sudo", "powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-initial-usage", "-f", "plist", "-i", strconv.Itoa(updateInterval))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -547,31 +568,24 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 		}
 		return 0, nil, nil
 	})
-
 	for scanner.Scan() {
 		plistData := scanner.Text()
 		if !strings.Contains(plistData, "<?xml") || !strings.Contains(plistData, "</plist>") {
 			continue
 		}
-
 		var data map[string]interface{}
 		err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
 		if err != nil {
 			log.Printf("Error decoding plist: %v", err)
 			continue
 		}
-		cpuMetrics := CPUMetrics{}
-		cpuMetrics = parseCPUMetrics(plistData, cpuMetrics)
-		gpuMetrics := parseGPUMetrics(data)
-		netdiskMetrics := parseNetDiskMetrics(data)
-
 		select {
 		case <-done:
 			cmd.Process.Kill()
 			return
-		case cpumetricsChan <- cpuMetrics:
-		case gpumetricsChan <- gpuMetrics:
-		case netdiskMetricsChan <- netdiskMetrics:
+		case cpumetricsChan <- parseCPUMetrics(plistData, NewCPUMetrics()):
+		case gpumetricsChan <- parseGPUMetrics(data):
+		case netdiskMetricsChan <- parseNetDiskMetrics(data):
 		}
 	}
 }
@@ -593,10 +607,10 @@ func parseNetDiskMetrics(data map[string]interface{}) NetDiskMetrics {
 	var metrics NetDiskMetrics
 	if network, ok := data["network"].(map[string]interface{}); ok {
 		if rate, ok := network["ibyte_rate"].(float64); ok {
-			metrics.InBytesPerSec = rate
+			metrics.InBytesPerSec = rate / 1000
 		}
 		if rate, ok := network["obyte_rate"].(float64); ok {
-			metrics.OutBytesPerSec = rate
+			metrics.OutBytesPerSec = rate / 1000
 		}
 		if rate, ok := network["ipacket_rate"].(float64); ok {
 			metrics.InPacketsPerSec = rate
@@ -629,45 +643,28 @@ func getProcessList() []ProcessMetrics {
 		log.Printf("Error getting process list: %v", err)
 		return nil
 	}
-
 	processes := []ProcessMetrics{}
 	lines := strings.Split(string(output), "\n")
-
 	for _, line := range lines[1:] {
 		if line == "" {
 			continue
 		}
-
 		fields := strings.Fields(line)
 		if len(fields) < 11 {
 			continue
 		}
-
 		cpu, _ := strconv.ParseFloat(fields[2], 64)
 		mem, _ := strconv.ParseFloat(fields[3], 64)
 		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)
 		pid, _ := strconv.Atoi(fields[1])
 
-		process := ProcessMetrics{
-			User:    fields[0],
-			PID:     pid,
-			CPU:     cpu,
-			Memory:  mem,
-			VSZ:     vsz,
-			RSS:     rss,
-			TTY:     fields[6],
-			State:   fields[7],
-			Started: fields[8],
-			Time:    fields[9],
-			Command: strings.Join(fields[10:], " "),
-		}
+		process := ProcessMetrics{User: fields[0], PID: pid, CPU: cpu, Memory: mem, VSZ: vsz, RSS: rss, TTY: fields[6], State: fields[7], Started: fields[8], Time: fields[9], Command: strings.Join(fields[10:], " ")}
 		processes = append(processes, process)
 	}
 	sort.Slice(processes, func(i, j int) bool {
 		return processes[i].CPU > processes[j].CPU
 	})
-
 	return processes
 }
 
@@ -708,8 +705,52 @@ func updateGPUUI(gpuMetrics GPUMetrics) {
 	gpuGauge.Percent = int(gpuMetrics.Active)
 }
 
+func getDiskStorage() (total, used, available string) {
+	cmd := exec.Command("df", "-h", "/")
+	output, err := cmd.Output()
+	if err != nil {
+		return "N/A", "N/A", "N/A"
+	}
+	lines := strings.Split(string(output), "\n")
+	if len(lines) < 2 {
+		return "N/A", "N/A", "N/A"
+	}
+	fields := strings.Fields(lines[1])
+	if len(fields) < 6 {
+		return "N/A", "N/A", "N/A"
+	}
+	totalBytes := parseSize(fields[1])
+	availBytes := parseSize(fields[3])
+	usedBytes := totalBytes - availBytes
+	return formatGigabytes(totalBytes), formatGigabytes(usedBytes), formatGigabytes(availBytes)
+}
+
+func parseSize(size string) float64 {
+	var value float64
+	var unit string
+	fmt.Sscanf(size, "%f%s", &value, &unit)
+	multiplier := 1.0
+	switch strings.ToLower(strings.TrimSuffix(unit, "i")) {
+	case "k", "kb":
+		multiplier = 1000
+	case "m", "mb":
+		multiplier = 1000 * 1000
+	case "g", "gb":
+		multiplier = 1000 * 1000 * 1000
+	case "t", "tb":
+		multiplier = 1000 * 1000 * 1000 * 1000
+	}
+	return value * multiplier
+}
+
+func formatGigabytes(bytes float64) string {
+	gb := bytes / (1000 * 1000 * 1000)
+	return fmt.Sprintf("%.0fGB", gb)
+}
+
 func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
-	NetworkInfo.Text = fmt.Sprintf("Out: %.1f packets/s, %.1f bytes/s\nIn: %.1f packets/s, %.1f bytes/s\nRead: %.1f ops/s, %.1f KBytes/s\nWrite: %.1f ops/s, %.1f KBytes/s", netdiskMetrics.OutPacketsPerSec, netdiskMetrics.OutBytesPerSec, netdiskMetrics.InPacketsPerSec, netdiskMetrics.InBytesPerSec, netdiskMetrics.ReadOpsPerSec, netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteOpsPerSec, netdiskMetrics.WriteKBytesPerSec)
+	total, used, available := getDiskStorage()
+	NetworkInfo.Text = fmt.Sprintf("Out: %.1f p/s, %.1f KB/s\n"+"In: %.1f p/s, %.1f KB/s\n"+"Read: %.1f ops/s, %.1f KB/s\n"+"Write: %.1f ops/s, %.1f KB/s\n"+"%s U / %s T / %s A", netdiskMetrics.OutPacketsPerSec, netdiskMetrics.OutBytesPerSec, netdiskMetrics.InPacketsPerSec, netdiskMetrics.InBytesPerSec, netdiskMetrics.ReadOpsPerSec, netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteOpsPerSec, netdiskMetrics.WriteKBytesPerSec, used, total, available)
 }
 
 func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetrics {
@@ -732,7 +773,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	cpuMetricDict := make(map[string]interface{})
 	eCores := []int{}
 	pCores := []int{}
-
 	for _, c := range clusters {
 		cluster := c.(map[string]interface{})
 		name := cluster["name"].(string)
@@ -744,10 +784,8 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 			freqHz = v
 		}
 		idleRatio := cluster["idle_ratio"].(float64)
-
 		cpuMetricDict[name+"_freq_Mhz"] = int(freqHz / 1e6)
 		cpuMetricDict[name+"_active"] = int((1 - idleRatio) * 100)
-
 		cpus := cluster["cpus"].([]interface{})
 		for _, c := range cpus {
 			cpu := c.(map[string]interface{})
@@ -783,7 +821,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	}
 	cpuMetrics.ECores = eCores
 	cpuMetrics.PCores = pCores
-
 	if _, exists := cpuMetricDict["E-Cluster_active"]; !exists {
 		if e0Active, ok := cpuMetricDict["E0-Cluster_active"].(int); ok {
 			if e1Active, ok := cpuMetricDict["E1-Cluster_active"].(int); ok {
@@ -803,7 +840,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 			cpuMetrics.EClusterFreqMHz = freq
 		}
 	}
-
 	if _, exists := cpuMetricDict["P-Cluster_active"]; !exists {
 		if _, hasP2 := cpuMetricDict["P2-Cluster_active"]; hasP2 {
 			if p0Active, ok := cpuMetricDict["P0-Cluster_active"].(int); ok {
@@ -829,10 +865,6 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 		if freq, ok := cpuMetricDict["P-Cluster_freq_Mhz"].(int); ok {
 			cpuMetrics.PClusterFreqMHz = freq
 		}
-	}
-
-	if aneEnergy, ok := processor["ane_power"].(float64); ok {
-		cpuMetrics.ANEW = float64(aneEnergy) / 1000
 	}
 	if cpuEnergy, ok := processor["cpu_power"].(float64); ok {
 		cpuMetrics.CPUW = float64(cpuEnergy) / 1000
@@ -860,7 +892,6 @@ func getSOCInfo() map[string]interface{} {
 	cpuInfoDict := getCPUInfo()
 	coreCountsDict := getCoreCounts()
 	var eCoreCounts, pCoreCounts int
-
 	if val, ok := coreCountsDict["hw.perflevel1.logicalcpu"]; ok {
 		eCoreCounts = val
 	}
@@ -878,20 +909,17 @@ func getSOCInfo() map[string]interface{} {
 		"p_core_count":   pCoreCounts,
 		"gpu_core_count": getGPUCores(),
 	}
-
 	return socInfo
 }
 
 func getMemoryMetrics() MemoryMetrics {
 	v, _ := mem.VirtualMemory()
 	s, _ := mem.SwapMemory()
-
 	totalMemory := v.Total
 	usedMemory := v.Used
 	availableMemory := v.Available
 	swapTotal := s.Total
 	swapUsed := s.Used
-
 	return MemoryMetrics{
 		Total:     totalMemory,
 		Used:      usedMemory,
@@ -910,7 +938,6 @@ func getCPUInfo() map[string]string {
 	cpuInfoLines := strings.Split(cpuInfo, "\n")
 	dataFields := []string{"machdep.cpu.brand_string", "machdep.cpu.core_count"}
 	cpuInfoDict := make(map[string]string)
-
 	for _, line := range cpuInfoLines {
 		for _, field := range dataFields {
 			if strings.Contains(line, field) {
@@ -933,7 +960,6 @@ func getCoreCounts() map[string]int {
 	coresInfoLines := strings.Split(coresInfo, "\n")
 	dataFields := []string{"hw.perflevel0.logicalcpu", "hw.perflevel1.logicalcpu"}
 	coresInfoDict := make(map[string]int)
-
 	for _, line := range coresInfoLines {
 		for _, field := range dataFields {
 			if strings.Contains(line, field) {
