@@ -5,6 +5,7 @@ go 1.20
 require (
 	github.com/gizak/termui/v3 v3.1.0
 	github.com/shirou/gopsutil v3.21.11+incompatible
+	howett.net/plist v1.0.1
 )
 
 require (
@@ -17,5 +18,4 @@ require (
 	github.com/stretchr/testify v1.2.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/sys v0.19.0 // indirect
-	howett.net/plist v1.0.1 // indirect
 )
