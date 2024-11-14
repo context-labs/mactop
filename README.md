@@ -4,7 +4,7 @@
 
 `mactop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips written by Carsen Klock. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
 
-![mactop](screenshot2.png)
+![mactop](screenshotnew.jpg)
 
 ## Compatibility
 
