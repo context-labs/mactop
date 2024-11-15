@@ -180,14 +180,10 @@ func setupGrid() {
 	grid = ui.NewGrid()
 	grid.Set(
 		ui.NewRow(1.0/2, // This row now takes half the height of the grid
-			ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
-			ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, processList))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
+			ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))), ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, processList))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/6, modelText),
-			ui.NewCol(1.0/3, NetworkInfo),
-			ui.NewCol(1.0/4, PowerChart),
-			ui.NewCol(1.0/4, TotalPowerChart),
+			ui.NewCol(1.0/6, modelText), ui.NewCol(1.0/3, NetworkInfo), ui.NewCol(1.0/4, PowerChart), ui.NewCol(1.0/4, TotalPowerChart),
 		),
 		ui.NewRow(1.0/4,
 			ui.NewCol(1.0, memoryGauge),
@@ -200,8 +196,7 @@ func switchGridLayout() {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/4,
-				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)),
-				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)),
+				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)),
 			),
 			ui.NewRow(2.0/4,
 				ui.NewCol(1.0/2,
@@ -214,9 +209,7 @@ func switchGridLayout() {
 				ui.NewCol(1.0/2, processList),
 			),
 			ui.NewRow(1.0/4,
-				ui.NewCol(3.0/6, memoryGauge),
-				ui.NewCol(1.0/6, modelText),
-				ui.NewCol(2.0/6, NetworkInfo),
+				ui.NewCol(3.0/6, memoryGauge), ui.NewCol(1.0/6, modelText), ui.NewCol(2.0/6, NetworkInfo),
 			),
 		)
 		termWidth, termHeight := ui.TerminalDimensions()
@@ -227,14 +220,10 @@ func switchGridLayout() {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/2,
-				ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))),
-				ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, processList))),
+				ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))), ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, processList))),
 			),
 			ui.NewRow(1.0/4,
-				ui.NewCol(1.0/4, modelText),
-				ui.NewCol(1.0/4, NetworkInfo),
-				ui.NewCol(1.0/4, PowerChart),
-				ui.NewCol(1.0/4, TotalPowerChart),
+				ui.NewCol(1.0/4, modelText), ui.NewCol(1.0/4, NetworkInfo), ui.NewCol(1.0/4, PowerChart), ui.NewCol(1.0/4, TotalPowerChart),
 			),
 			ui.NewRow(1.0/4,
 				ui.NewCol(1.0, memoryGauge),
@@ -277,7 +266,7 @@ func toggleHelpMenu() {
 func togglePartyMode() {
 	partyMode = !partyMode
 	if partyMode {
-		partyTicker = time.NewTicker(500 * time.Millisecond)
+		partyTicker = time.NewTicker(time.Duration(updateInterval/2) * time.Millisecond)
 		go func() {
 			for range partyTicker.C {
 				if !partyMode {
@@ -340,7 +329,7 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.2.0"
+	version := "v0.2.1"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
@@ -436,7 +425,7 @@ func main() {
 	netdiskMetricsChan := make(chan NetDiskMetrics, 1)
 	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan)
 	go func() {
-		ticker := time.NewTicker(time.Duration(updateInterval/2) * time.Millisecond)
+		ticker := time.NewTicker(time.Duration(updateInterval) * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -876,6 +865,19 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	}
 	if combinedPower, ok := processor["combined_power"].(float64); ok {
 		cpuMetrics.PackageW = float64(combinedPower) / 1000
+	}
+	if _, exists := cpuMetricDict["P-Cluster_freq_Mhz"]; !exists {
+		var totalFreq float64
+		var clusterCount int
+		for i := 0; i <= 50; i++ {
+			if freq, ok := cpuMetricDict[fmt.Sprintf("P-Cluster%d_freq_Mhz", i)].(int); ok {
+				totalFreq += float64(freq)
+				clusterCount++
+			}
+		}
+		if clusterCount > 0 {
+			cpuMetrics.PClusterFreqMHz = int(totalFreq / float64(clusterCount))
+		}
 	}
 	return cpuMetrics
 }
