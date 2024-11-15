@@ -329,7 +329,7 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.2.0"
+	version := "v0.2.1"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
