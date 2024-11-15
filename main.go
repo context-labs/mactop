@@ -266,7 +266,7 @@ func toggleHelpMenu() {
 func togglePartyMode() {
 	partyMode = !partyMode
 	if partyMode {
-		partyTicker = time.NewTicker(500 * time.Millisecond)
+		partyTicker = time.NewTicker(time.Duration(updateInterval/2) * time.Millisecond)
 		go func() {
 			for range partyTicker.C {
 				if !partyMode {
@@ -425,7 +425,7 @@ func main() {
 	netdiskMetricsChan := make(chan NetDiskMetrics, 1)
 	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan)
 	go func() {
-		ticker := time.NewTicker(time.Duration(updateInterval/2) * time.Millisecond)
+		ticker := time.NewTicker(time.Duration(updateInterval) * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
