@@ -2,20 +2,32 @@
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang! github.com/context-labs/mactop
 package main
 
+/*
+#cgo LDFLAGS: -framework CoreFoundation -framework IOKit
+#include <mach/mach_host.h>
+#include <mach/processor_info.h>
+#include <mach/mach_init.h>
+
+extern kern_return_t vm_deallocate(vm_map_t target_task, vm_address_t address, vm_size_t size);
+*/
+import "C"
 import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"image"
 	"log"
 	"math"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
@@ -23,19 +35,55 @@ import (
 	"howett.net/plist"
 )
 
+var (
+	version                                      = "v0.2.2"
+	cpuGauge, gpuGauge, memoryGauge              *w.Gauge
+	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
+	grid                                         *ui.Grid
+	processList                                  *w.List
+	sparkline, gpuSparkline                      *w.Sparkline
+	sparklineGroup, gpuSparklineGroup            *w.SparklineGroup
+	cpuCoreWidget                                *CPUCoreWidget
+	selectedProcess                              int
+	powerValues                                  = make([]float64, 35)
+	lastUpdateTime                               time.Time
+	stderrLogger                                 = log.New(os.Stderr, "", 0)
+	currentGridLayout                            = "default"
+	showHelp, partyMode                          = false, false
+	updateInterval                               = 1000
+	done                                         = make(chan struct{})
+	currentColorIndex                            = 0
+	colorOptions                                 = []ui.Color{ui.ColorWhite, ui.ColorGreen, ui.ColorBlue, ui.ColorCyan, ui.ColorMagenta, ui.ColorYellow, ui.ColorRed}
+	partyTicker                                  *time.Ticker
+	lastCPUTimes                                 []CPUUsage
+	firstRun                                     = true
+	processHistory                               = make(map[int]*ProcessMetrics)
+	lastProcessUpdateTime                        = time.Now()
+	currentSort                                  = "CPU" // Default sort by CPU
+	sortReverse                                  = false // Toggle for reverse sorting
+	columns                                      = []string{"PID", "USER", "VIRT", "RES", "CPU", "MEM", "TIME", "CMD"}
+	selectedColumn                               = 4 // Default to CPU (0-based index)
+	minPower                                     = math.MaxFloat64
+	maxPowerSeen                                 = 0.1
+	powerHistory                                 = make([]float64, 100)
+	maxPower                                     = 0.0 // Track maximum power for better scaling
+	gpuValues                                    = make([]float64, 65)
+)
+
+type CPUUsage struct {
+	User   float64
+	System float64
+	Idle   float64
+	Nice   float64
+}
+
 type CPUMetrics struct {
 	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz int
 	ECores, PCores                                                   []int
 	CoreMetrics                                                      map[string]int
 	CPUW, GPUW, PackageW                                             float64
-}
-
-func NewCPUMetrics() CPUMetrics {
-	return CPUMetrics{
-		CoreMetrics: make(map[string]int),
-		ECores:      make([]int, 0),
-		PCores:      make([]int, 0),
-	}
+	CoreUsages                                                       []float64
+	Throttled                                                        bool
 }
 
 type NetDiskMetrics struct {
@@ -47,9 +95,10 @@ type GPUMetrics struct {
 }
 type ProcessMetrics struct {
 	PID                                      int
-	CPU, Memory                              float64
+	CPU, LastTime, Memory                    float64
 	VSZ, RSS                                 int64
 	User, TTY, State, Started, Time, Command string
+	LastUpdated                              time.Time
 }
 
 type MemoryMetrics struct {
@@ -63,11 +112,27 @@ type EventThrottler struct {
 	C chan struct{}
 }
 
+type CPUCoreWidget struct {
+	*ui.Block
+	cores                  []float64
+	labels                 []string
+	eCoreCount, pCoreCount int
+	modelName              string
+}
+
 func NewEventThrottler(gracePeriod time.Duration) *EventThrottler {
 	return &EventThrottler{
 		timer:       nil,
 		gracePeriod: gracePeriod,
 		C:           make(chan struct{}, 1),
+	}
+}
+
+func NewCPUMetrics() CPUMetrics {
+	return CPUMetrics{
+		CoreMetrics: make(map[string]int),
+		ECores:      make([]int, 0),
+		PCores:      make([]int, 0),
 	}
 }
 
@@ -85,24 +150,191 @@ func (e *EventThrottler) Notify() {
 	})
 }
 
-var (
-	cpu1Gauge, cpu2Gauge, gpuGauge, memoryGauge  *w.Gauge
-	TotalPowerChart                              *w.BarChart
-	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
-	grid                                         *ui.Grid
-	processList                                  *w.List
-	selectedProcess                              int
-	powerValues                                  []float64
-	lastUpdateTime                               time.Time
-	stderrLogger                                 = log.New(os.Stderr, "", 0)
-	currentGridLayout                            = "default"
-	showHelp, partyMode                          = false, false
-	updateInterval                               = 1000
-	done                                         = make(chan struct{})
-	currentColorIndex                            = 0
-	colorOptions                                 = []ui.Color{ui.ColorWhite, ui.ColorGreen, ui.ColorBlue, ui.ColorCyan, ui.ColorMagenta, ui.ColorYellow, ui.ColorRed}
-	partyTicker                                  *time.Ticker
-)
+func GetCPUPercentages() ([]float64, error) {
+	currentTimes, err := GetCPUUsage()
+	if err != nil {
+		return nil, err
+	}
+	if firstRun {
+		lastCPUTimes = currentTimes
+		firstRun = false
+		return make([]float64, len(currentTimes)), nil
+	}
+	percentages := make([]float64, len(currentTimes))
+	for i := range currentTimes {
+		totalDelta := (currentTimes[i].User - lastCPUTimes[i].User) +
+			(currentTimes[i].System - lastCPUTimes[i].System) +
+			(currentTimes[i].Idle - lastCPUTimes[i].Idle) +
+			(currentTimes[i].Nice - lastCPUTimes[i].Nice)
+
+		activeDelta := (currentTimes[i].User - lastCPUTimes[i].User) +
+			(currentTimes[i].System - lastCPUTimes[i].System) +
+			(currentTimes[i].Nice - lastCPUTimes[i].Nice)
+
+		if totalDelta > 0 {
+			percentages[i] = (activeDelta / totalDelta) * 100.0
+		}
+		if percentages[i] < 0 {
+			percentages[i] = 0
+		} else if percentages[i] > 100 {
+			percentages[i] = 100
+		}
+	}
+	lastCPUTimes = currentTimes
+	return percentages, nil
+}
+
+func GetCPUUsage() ([]CPUUsage, error) {
+	var numCPUs C.natural_t
+	var cpuLoad *C.processor_cpu_load_info_data_t
+	var cpuMsgCount C.mach_msg_type_number_t
+	host := C.mach_host_self()
+	kernReturn := C.host_processor_info(
+		host,
+		C.PROCESSOR_CPU_LOAD_INFO,
+		&numCPUs,
+		(*C.processor_info_array_t)(unsafe.Pointer(&cpuLoad)),
+		&cpuMsgCount,
+	)
+	if kernReturn != C.KERN_SUCCESS {
+		return nil, fmt.Errorf("error getting CPU info: %d", kernReturn)
+	}
+	defer C.vm_deallocate(
+		C.mach_task_self_,
+		(C.vm_address_t)(uintptr(unsafe.Pointer(cpuLoad))),
+		C.vm_size_t(cpuMsgCount)*C.sizeof_processor_cpu_load_info_data_t,
+	)
+	cpuLoadInfo := (*[1 << 30]C.processor_cpu_load_info_data_t)(unsafe.Pointer(cpuLoad))[:numCPUs:numCPUs]
+	cpuUsage := make([]CPUUsage, numCPUs)
+	for i := 0; i < int(numCPUs); i++ {
+		cpuUsage[i] = CPUUsage{
+			User:   float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_USER]),
+			System: float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_SYSTEM]),
+			Idle:   float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_IDLE]),
+			Nice:   float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_NICE]),
+		}
+	}
+	return cpuUsage, nil
+}
+
+func NewCPUCoreWidget(modelInfo map[string]interface{}) *CPUCoreWidget {
+	eCoreCount, _ := modelInfo["e_core_count"].(int)
+	pCoreCount, _ := modelInfo["p_core_count"].(int)
+	modelName, _ := modelInfo["name"].(string)
+	totalCores := eCoreCount + pCoreCount
+
+	labels := make([]string, totalCores)
+	for i := 0; i < eCoreCount; i++ {
+		labels[i] = fmt.Sprintf("E%d", i)
+	}
+	for i := 0; i < pCoreCount; i++ {
+		labels[i+eCoreCount] = fmt.Sprintf("P%d", i)
+	}
+
+	return &CPUCoreWidget{
+		Block:      ui.NewBlock(),
+		cores:      make([]float64, totalCores),
+		labels:     labels,
+		eCoreCount: eCoreCount,
+		pCoreCount: pCoreCount,
+		modelName:  modelName,
+	}
+}
+
+func (w *CPUCoreWidget) UpdateUsage(usage []float64) {
+	w.cores = make([]float64, len(usage))
+	copy(w.cores, usage)
+}
+
+func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
+	w.Block.Draw(buf)
+	if len(w.cores) == 0 {
+		return
+	}
+	themeColor := w.BorderStyle.Fg
+	totalCores := len(w.cores)
+	cols := 4 // default for <= 16 cores
+	if totalCores > 16 {
+		cols = 8 // switch to 8 columns for > 16 cores
+	}
+	availableWidth := w.Inner.Dx()
+	availableHeight := w.Inner.Dy()
+	minColWidth := 20 // minimum width needed for a readable core display
+	if (availableWidth / cols) < minColWidth {
+		cols = max(1, availableWidth/minColWidth)
+	}
+	rows := (totalCores + cols - 1) / cols
+	if rows > availableHeight {
+		rows = availableHeight
+		cols = (totalCores + rows - 1) / rows // Recalculate columns
+	}
+	barWidth := availableWidth / cols
+	labelWidth := 2 // Width for core labels
+
+	for i := 0; i < totalCores; i++ {
+		col := i % cols
+		row := i / cols
+		actualIndex := col*rows + row
+
+		if actualIndex >= totalCores || row >= rows {
+			continue
+		}
+
+		x := w.Inner.Min.X + (col * barWidth)
+		y := w.Inner.Min.Y + row
+
+		if y >= w.Inner.Max.Y {
+			continue
+		}
+
+		usage := w.cores[actualIndex]
+
+		label := fmt.Sprintf("%d", actualIndex)
+		buf.SetString(label, ui.NewStyle(themeColor), image.Pt(x, y))
+
+		availWidth := barWidth - labelWidth - 2 // -2 for brackets
+		if x+labelWidth+availWidth > w.Inner.Max.X {
+			availWidth = w.Inner.Max.X - x - labelWidth
+		}
+
+		if availWidth < 9 {
+			continue
+		}
+
+		usedWidth := int((usage / 100.0) * float64(availWidth-7))
+
+		buf.SetString("[", ui.NewStyle(ui.ColorWhite),
+			image.Pt(x+labelWidth, y))
+
+		for bx := 0; bx < availWidth-7; bx++ {
+			char := " "
+			var color ui.Color
+			if bx < usedWidth {
+				char = "❚"
+				switch {
+				case usage >= 60:
+					color = ui.ColorRed
+				case usage >= 40:
+					color = ui.ColorYellow
+				case usage >= 30:
+					color = ui.ColorCyan
+				default:
+					color = themeColor
+				}
+			} else {
+				color = themeColor
+			}
+			buf.SetString(char, ui.NewStyle(color),
+				image.Pt(x+labelWidth+1+bx, y))
+		}
+		percentage := fmt.Sprintf("%5.1f%%", usage)
+		buf.SetString(percentage, ui.NewStyle(245),
+			image.Pt(x+labelWidth+availWidth-7, y))
+
+		buf.SetString("]", ui.NewStyle(ui.ColorWhite),
+			image.Pt(x+labelWidth+availWidth-1, y))
+	}
+}
 
 func setupUI() {
 	appleSiliconModel := getSOCInfo()
@@ -121,7 +353,7 @@ func setupUI() {
 	if !ok {
 		pCoreCount = 0
 	}
-	gpuCoreCount, ok := appleSiliconModel["gpu_core_count"].(string) // Assuming this is stored as a string
+	gpuCoreCount, ok := appleSiliconModel["gpu_core_count"].(string)
 	if !ok {
 		gpuCoreCount = "?"
 	}
@@ -132,16 +364,11 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
-	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- c: Cycle through UI color themes\n- p: Toggle party mode (color cycling)\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'."
-	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s",
-		modelName,
-		eCoreCount,
-		pCoreCount,
-		gpuCoreCount,
-	)
+	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- c: Cycle through UI color themes\n- p: Toggle party mode (color cycling)\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\nVersion: " + version
+	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
 
 	processList = w.NewList()
-	processList.Title = "Process List (↑/↓ to scroll)"
+	processList.Title = "Process List"
 	processList.TextStyle = ui.NewStyle(ui.ColorGreen)
 	processList.WrapText = false
 	processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, ui.ColorGreen)
@@ -149,7 +376,7 @@ func setupUI() {
 	processList.SelectedRow = 0
 
 	gauges := []*w.Gauge{
-		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
+		w.NewGauge(), w.NewGauge(), w.NewGauge(),
 	}
 	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage"}
 	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
@@ -158,35 +385,73 @@ func setupUI() {
 		gauge.Title = titles[i]
 		gauge.BarColor = colors[i]
 	}
-	cpu1Gauge, cpu2Gauge, gpuGauge, memoryGauge = gauges[0], gauges[1], gauges[2], gauges[3]
+	cpuGauge, gpuGauge, memoryGauge = gauges[0], gauges[1], gauges[2]
 
 	PowerChart, NetworkInfo = w.NewParagraph(), w.NewParagraph()
 	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk Info"
 
-	TotalPowerChart = w.NewBarChart()
-	TotalPowerChart.Title = "~ W Total Power"
-	TotalPowerChart.SetRect(50, 0, 75, 10)
-	TotalPowerChart.BarWidth = 5 // Adjust the bar width to fill the available space
-	TotalPowerChart.BarGap = 1   // Remove the gap between the bars
-	TotalPowerChart.PaddingBottom = 0
-	TotalPowerChart.PaddingTop = 1
-	TotalPowerChart.NumFormatter = func(num float64) string {
-		return ""
-	}
+	termWidth, _ := ui.TerminalDimensions()
+	numPoints := (termWidth / 2) / 2
+	powerValues = make([]float64, numPoints)
+	gpuValues = make([]float64, numPoints)
+
+	sparkline = w.NewSparkline()
+	sparkline.LineColor = ui.ColorGreen
+	sparkline.MaxHeight = 10
+	sparkline.Data = powerValues
+
+	sparklineGroup = w.NewSparklineGroup(sparkline)
+
+	gpuSparkline = w.NewSparkline()
+	gpuSparkline.LineColor = ui.ColorGreen
+	gpuSparkline.MaxHeight = 10
+	gpuSparkline.Data = gpuValues
+	gpuSparklineGroup = w.NewSparklineGroup(gpuSparkline)
+	gpuSparklineGroup.Title = "GPU Usage History"
+
 	updateProcessList()
+
+	cpuCoreWidget = NewCPUCoreWidget(appleSiliconModel)
+	eCoreCount = appleSiliconModel["e_core_count"].(int)
+	pCoreCount = appleSiliconModel["p_core_count"].(int)
+	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP)",
+		eCoreCount+pCoreCount,
+		eCoreCount,
+		pCoreCount,
+	)
+	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP)",
+		eCoreCount+pCoreCount,
+		eCoreCount,
+		pCoreCount,
+	)
 }
 
 func setupGrid() {
 	grid = ui.NewGrid()
+
 	grid.Set(
-		ui.NewRow(1.0/2, // This row now takes half the height of the grid
-			ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))), ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, processList))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
+		ui.NewRow(1.0/4,
+			ui.NewCol(1.0, cpuGauge),
+			// ui.NewCol(1.0/2, gpuSparklineGroup),
+		),
+		ui.NewRow(2.0/4,
+			ui.NewCol(1.0/2,
+				ui.NewRow(1.0/2, gpuGauge),
+				ui.NewRow(1.0/2,
+					ui.NewCol(1.0/2, PowerChart),
+					ui.NewCol(1.0/2, sparklineGroup),
+				),
+			),
+			ui.NewCol(1.0/2,
+				ui.NewRow(1.0/2, memoryGauge),
+				ui.NewRow(1.0/2,
+					ui.NewCol(1.0/3, modelText),
+					ui.NewCol(2.0/3, NetworkInfo),
+				),
+			),
 		),
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/6, modelText), ui.NewCol(1.0/3, NetworkInfo), ui.NewCol(1.0/4, PowerChart), ui.NewCol(1.0/4, TotalPowerChart),
-		),
-		ui.NewRow(1.0/4,
-			ui.NewCol(1.0, memoryGauge),
+			ui.NewCol(1.0, processList),
 		),
 	)
 }
@@ -195,21 +460,14 @@ func switchGridLayout() {
 	if currentGridLayout == "default" {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
-			ui.NewRow(1.0/4,
-				ui.NewCol(1.0/2, ui.NewRow(1.0, cpu1Gauge)), ui.NewCol(1.0/2, ui.NewRow(1.0, cpu2Gauge)),
-			),
-			ui.NewRow(2.0/4,
-				ui.NewCol(1.0/2,
-					ui.NewRow(1.0/2, gpuGauge),
-					ui.NewRow(1.0/2,
-						ui.NewCol(1.0/2, PowerChart),
-						ui.NewCol(1.0/2, TotalPowerChart),
-					),
-				),
-				ui.NewCol(1.0/2, processList),
+			ui.NewRow(1.0/2, // This row now takes half the height of the grid
+				ui.NewCol(1.0/2, cpuCoreWidget), ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, memoryGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
 			),
 			ui.NewRow(1.0/4,
-				ui.NewCol(3.0/6, memoryGauge), ui.NewCol(1.0/6, modelText), ui.NewCol(2.0/6, NetworkInfo),
+				ui.NewCol(1.0/6, modelText), ui.NewCol(1.0/3, NetworkInfo), ui.NewCol(1.0/4, PowerChart), ui.NewCol(1.0/4, sparklineGroup),
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0, processList),
 			),
 		)
 		termWidth, termHeight := ui.TerminalDimensions()
@@ -219,14 +477,27 @@ func switchGridLayout() {
 	} else {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
-			ui.NewRow(1.0/2,
-				ui.NewCol(1.0/2, ui.NewRow(1.0/2, cpu1Gauge), ui.NewCol(1.0, ui.NewRow(1.0, cpu2Gauge))), ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, processList))),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0, cpuGauge),
+			),
+			ui.NewRow(2.0/4,
+				ui.NewCol(1.0/2,
+					ui.NewRow(1.0/2, gpuGauge),
+					ui.NewRow(1.0/2,
+						ui.NewCol(1.0/2, PowerChart),
+						ui.NewCol(1.0/2, sparklineGroup),
+					),
+				),
+				ui.NewCol(1.0/2,
+					ui.NewRow(1.0/2, memoryGauge),
+					ui.NewRow(1.0/2,
+						ui.NewCol(1.0/3, modelText),
+						ui.NewCol(2.0/3, NetworkInfo),
+					),
+				),
 			),
 			ui.NewRow(1.0/4,
-				ui.NewCol(1.0/4, modelText), ui.NewCol(1.0/4, NetworkInfo), ui.NewCol(1.0/4, PowerChart), ui.NewCol(1.0/4, TotalPowerChart),
-			),
-			ui.NewRow(1.0/4,
-				ui.NewCol(1.0, memoryGauge),
+				ui.NewCol(1.0, processList),
 			),
 		)
 		termWidth, termHeight := ui.TerminalDimensions()
@@ -287,21 +558,239 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
+func parseTimeString(timeStr string) float64 {
+	var hours, minutes int
+	var seconds float64
+	if strings.Contains(timeStr, "h") {
+		parts := strings.Split(timeStr, "h")
+		fmt.Sscanf(parts[0], "%d", &hours)
+		fmt.Sscanf(parts[1], "%d:%f", &minutes, &seconds)
+	} else {
+		fmt.Sscanf(timeStr, "%d:%f", &minutes, &seconds)
+	}
+	return float64(hours*3600) + float64(minutes*60) + seconds
+}
+
+func formatTime(seconds float64) string {
+	hours := int(seconds) / 3600
+	minutes := (int(seconds) / 60) % 60
+	secs := int(seconds) % 60
+	centisecs := int((seconds - float64(int(seconds))) * 100)
+
+	if hours > 0 {
+		return fmt.Sprintf("%dh%02d:%02d", hours, minutes, secs)
+	}
+	return fmt.Sprintf("%02d:%02d.%02d", minutes, secs, centisecs)
+}
+
+func formatMemorySize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1fG", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%dM", bytes/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%dK", bytes/KB)
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+func formatResMemorySize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+	if bytes < MB { // If value seems too small, assume it's in KB
+		bytes *= KB
+	}
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1fG", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%dM", bytes/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%dK", bytes/KB)
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+func truncateWithEllipsis(s string, maxLen int) string {
+	if maxLen <= 3 {
+		return "..."
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
 func updateProcessList() {
 	processes := getProcessList()
-	items := make([]string, len(processes))
+	themeColor := processList.TextStyle.Fg
+	themeColorStr := "white" // Default color in case theme color isn't recognized
+	switch themeColor {
+	case ui.ColorRed:
+		themeColorStr = "red"
+	case ui.ColorGreen:
+		themeColorStr = "green"
+	case ui.ColorYellow:
+		themeColorStr = "yellow"
+	case ui.ColorBlue:
+		themeColorStr = "blue"
+	case ui.ColorMagenta:
+		themeColorStr = "magenta"
+	case ui.ColorCyan:
+		themeColorStr = "cyan"
+	case ui.ColorWhite:
+		themeColorStr = "white"
+	}
+	termWidth, _ := 200, 200 // Fixed for calling repeatedly
+	minWidth := 40           // Set a minimum width to prevent crashes
+	availableWidth := max(termWidth-2, minWidth)
+	maxWidths := map[string]int{
+		"PID":  5,  // Minimum for PID
+		"USER": 12, // Fixed maximum width for USER
+		"VIRT": 6,  // For memory format
+		"RES":  6,  // For memory format
+		"CPU":  6,  // For "XX.X%"
+		"MEM":  5,  // For "X.X%"
+		"TIME": 8,  // For time format
+		"CMD":  13, // Minimum for command
+	}
+	usedWidth := 0
+	for col, width := range maxWidths {
+		if col != "CMD" {
+			usedWidth += width + 1 // +1 for separator
+		}
+	}
+	maxWidths["CMD"] = availableWidth - usedWidth
+
+	header := ""
+	for i, col := range columns {
+		width := maxWidths[col]
+		format := ""
+		switch col {
+		case "PID":
+			format = fmt.Sprintf("%%%ds", width) // Right-align
+		case "USER":
+			format = fmt.Sprintf("%%-%ds", width) // Left-align
+		case "VIRT", "RES":
+			format = fmt.Sprintf("%%%ds", width) // Right-align
+		case "CPU", "MEM":
+			format = fmt.Sprintf("%%%ds", width) // Right-align
+		case "TIME":
+			format = fmt.Sprintf("%%%ds", width) // Right-align
+		case "CMD":
+			format = fmt.Sprintf("%%-%ds", width) // Left-align
+		}
+
+		colText := fmt.Sprintf(format, col)
+		if i == selectedColumn {
+			if sortReverse {
+				header += fmt.Sprintf("[%s↑](fg:black,bg:%s)", colText, themeColorStr)
+			} else {
+				header += fmt.Sprintf("[%s↓](fg:black,bg:%s)", colText, themeColorStr)
+			}
+		} else {
+			header += fmt.Sprintf("[%s](fg:%s)", colText, themeColorStr)
+		}
+
+		if i < len(columns)-1 {
+			header += "|"
+		}
+	}
+
+	sort.Slice(processes, func(i, j int) bool {
+		var result bool
+
+		switch columns[selectedColumn] {
+		case "PID":
+			result = processes[i].PID < processes[j].PID
+		case "USER":
+			result = strings.ToLower(processes[i].User) < strings.ToLower(processes[j].User)
+		case "VIRT":
+			result = processes[i].VSZ > processes[j].VSZ
+		case "RES":
+			result = processes[i].RSS > processes[j].RSS
+		case "CPU":
+			result = processes[i].CPU > processes[j].CPU
+		case "MEM":
+			result = processes[i].Memory > processes[j].Memory
+		case "TIME":
+			iTime := parseTimeString(processes[i].Time)
+			jTime := parseTimeString(processes[j].Time)
+			result = iTime > jTime
+		case "CMD":
+			result = strings.ToLower(processes[i].Command) < strings.ToLower(processes[j].Command)
+		default:
+			result = processes[i].CPU > processes[j].CPU
+		}
+
+		if sortReverse {
+			return !result
+		}
+		return result
+	})
+
+	items := make([]string, len(processes)+1) // +1 for header
+	items[0] = header
+
 	for i, p := range processes {
-		items[i] = fmt.Sprintf("%5d %-8s %5.1f%% %5.1f%% %-50.50s",
-			p.PID, p.User, p.CPU, p.Memory, p.Command)
+		seconds := parseTimeString(p.Time)
+		timeStr := formatTime(seconds)
+		virtStr := formatMemorySize(p.VSZ)
+		resStr := formatResMemorySize(p.RSS)
+		username := truncateWithEllipsis(p.User, maxWidths["USER"])
+
+		items[i+1] = fmt.Sprintf("%*d %-*s %*s %*s %*.1f%% %*.1f%% %*s %-s",
+			maxWidths["PID"], p.PID,
+			maxWidths["USER"], username,
+			maxWidths["VIRT"], virtStr,
+			maxWidths["RES"], resStr,
+			maxWidths["CPU"]-1, p.CPU, // -1 for % symbol
+			maxWidths["MEM"]-1, p.Memory, // -1 for % symbol
+			maxWidths["TIME"], timeStr,
+			truncateWithEllipsis(p.Command, maxWidths["CMD"]),
+		)
 	}
+
+	processList.Title = "Process List (↑/↓ scroll, ←/→ select column, Enter/Space to sort)"
 	processList.Rows = items
-	if selectedProcess >= len(items) {
-		selectedProcess = len(items) - 1
+}
+
+func handleProcessListEvents(e ui.Event) {
+	switch e.ID {
+	case "<Up>":
+		if processList.SelectedRow > 0 {
+			processList.SelectedRow--
+		}
+	case "<Down>":
+		if processList.SelectedRow < len(processList.Rows)-1 {
+			processList.SelectedRow++
+		}
+	case "<Left>":
+		if selectedColumn > 0 {
+			selectedColumn--
+			updateProcessList()
+		}
+	case "<Right>":
+		if selectedColumn < len(columns)-1 {
+			selectedColumn++
+			updateProcessList()
+		}
+	case "<Enter>", "<Space>":
+		sortReverse = !sortReverse
+		updateProcessList()
 	}
-	if selectedProcess < 0 {
-		selectedProcess = 0
-	}
-	processList.SelectedRow = selectedProcess
+	ui.Render(processList, grid)
 }
 
 func cycleColors() {
@@ -311,15 +800,32 @@ func cycleColors() {
 	ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 	ui.Theme.BarChart.Bars = []ui.Color{color}
 
-	cpu1Gauge.BarColor, cpu2Gauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color, color
-	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle, TotalPowerChart.BarColors = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color), []ui.Color{color}
+	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
+	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color)
 	processList.SelectedRowStyle, modelText.TextStyle, helpText.TextStyle = ui.NewStyle(ui.ColorBlack, color), ui.NewStyle(color), ui.NewStyle(color)
 
-	cpu1Gauge.BorderStyle.Fg, cpu1Gauge.TitleStyle.Fg, cpu2Gauge.BorderStyle.Fg, cpu2Gauge.TitleStyle.Fg = color, color, color, color
+	cpuGauge.BorderStyle.Fg, cpuGauge.TitleStyle.Fg = color, color
 	gpuGauge.BorderStyle.Fg, gpuGauge.TitleStyle.Fg, memoryGauge.BorderStyle.Fg, memoryGauge.TitleStyle.Fg = color, color, color, color
 	processList.BorderStyle.Fg, processList.TitleStyle.Fg, NetworkInfo.BorderStyle.Fg, NetworkInfo.TitleStyle.Fg = color, color, color, color
-	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg, TotalPowerChart.BorderStyle.Fg, TotalPowerChart.TitleStyle.Fg = color, color, color, color
+	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg = color, color
 	modelText.BorderStyle.Fg, modelText.TitleStyle.Fg, helpText.BorderStyle.Fg, helpText.TitleStyle.Fg = color, color, color, color
+
+	if sparkline != nil {
+		sparkline.LineColor = color
+		sparkline.TitleStyle = ui.NewStyle(color)
+	}
+	if sparklineGroup != nil {
+		sparklineGroup.BorderStyle = ui.NewStyle(color)
+		sparklineGroup.TitleStyle = ui.NewStyle(color)
+	}
+
+	cpuCoreWidget.BorderStyle.Fg, cpuCoreWidget.TitleStyle.Fg = color, color
+	processList.TextStyle = ui.NewStyle(color)
+	processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
+	processList.BorderStyle.Fg = color
+	processList.TitleStyle.Fg = color
+	updateProcessList()
+	ui.Render(processList)
 }
 
 func main() {
@@ -329,7 +835,6 @@ func main() {
 		err                   error
 		setColor, setInterval bool
 	)
-	version := "v0.2.1"
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
@@ -408,7 +913,7 @@ func main() {
 		ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 		ui.Theme.BarChart.Bars = []ui.Color{color}
 		setupUI()
-		cpu1Gauge.BarColor, cpu2Gauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color, color
+		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
 		processList.TextStyle = ui.NewStyle(color)
 		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
 	} else {
@@ -432,11 +937,32 @@ func main() {
 			case cpuMetrics := <-cpuMetricsChan:
 				updateCPUUI(cpuMetrics)
 				updateTotalPowerChart(cpuMetrics.PackageW)
+				ui.Render(grid)
 			case gpuMetrics := <-gpuMetricsChan:
 				updateGPUUI(gpuMetrics)
+				ui.Render(grid)
 			case netdiskMetrics := <-netdiskMetricsChan:
 				updateNetDiskUI(netdiskMetrics)
+				ui.Render(grid)
 			case <-ticker.C:
+				percentages, err := GetCPUPercentages()
+				if err != nil {
+					stderrLogger.Printf("Error getting CPU percentages: %v\n", err)
+					continue
+				}
+				cpuCoreWidget.UpdateUsage(percentages)
+				var totalUsage float64
+				for _, usage := range percentages {
+					totalUsage += usage
+				}
+				totalUsage /= float64(len(percentages))
+
+				cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%%",
+					cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
+					cpuCoreWidget.eCoreCount,
+					cpuCoreWidget.pCoreCount,
+					totalUsage,
+				)
 				updateProcessList()
 				ui.Render(grid)
 			case <-done:
@@ -458,6 +984,7 @@ func main() {
 	for {
 		select {
 		case e := <-uiEvents:
+			handleProcessListEvents(e)
 			switch e.ID {
 			case "q", "<C-c>":
 				close(done)
@@ -572,9 +1099,25 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 		case <-done:
 			cmd.Process.Kill()
 			return
-		case cpumetricsChan <- parseCPUMetrics(plistData, NewCPUMetrics()):
-		case gpumetricsChan <- parseGPUMetrics(data):
-		case netdiskMetricsChan <- parseNetDiskMetrics(data):
+		default:
+			// Send all metrics at once
+			cpuMetrics := parseCPUMetrics(data, NewCPUMetrics())
+			gpuMetrics := parseGPUMetrics(data)
+			netdiskMetrics := parseNetDiskMetrics(data)
+
+			// Non-blocking sends
+			select {
+			case cpumetricsChan <- cpuMetrics:
+			default:
+			}
+			select {
+			case gpumetricsChan <- gpuMetrics:
+			default:
+			}
+			select {
+			case netdiskMetricsChan <- netdiskMetrics:
+			default:
+			}
 		}
 	}
 }
@@ -626,7 +1169,7 @@ func parseNetDiskMetrics(data map[string]interface{}) NetDiskMetrics {
 }
 
 func getProcessList() []ProcessMetrics {
-	cmd := exec.Command("ps", "aux")
+	cmd := exec.Command("ps", "aux") // ps aux has the same results as htop, TODO: better method in Cgo
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	output, err := cmd.Output()
 	if err != nil {
@@ -648,9 +1191,10 @@ func getProcessList() []ProcessMetrics {
 		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)
 		pid, _ := strconv.Atoi(fields[1])
-
-		process := ProcessMetrics{User: fields[0], PID: pid, CPU: cpu, Memory: mem, VSZ: vsz, RSS: rss, TTY: fields[6], State: fields[7], Started: fields[8], Time: fields[9], Command: strings.Join(fields[10:], " ")}
+		command := filepath.Base(fields[10])
+		process := ProcessMetrics{User: fields[0], PID: pid, CPU: cpu, Memory: mem, VSZ: vsz, RSS: rss, TTY: fields[6], State: fields[7], Started: fields[8], Time: fields[9], Command: command}
 		processes = append(processes, process)
+
 	}
 	sort.Slice(processes, func(i, j int) bool {
 		return processes[i].CPU > processes[j].CPU
@@ -658,33 +1202,72 @@ func getProcessList() []ProcessMetrics {
 	return processes
 }
 
-func updateTotalPowerChart(newPowerValue float64) {
-	currentTime := time.Now()
-	powerValues = append(powerValues, newPowerValue)
-	if currentTime.Sub(lastUpdateTime) >= 2*time.Second {
-		var sum float64
-		for _, value := range powerValues {
-			sum += value
-		}
-		averagePower := sum / float64(len(powerValues))
-		averagePower = math.Round(averagePower)
-		TotalPowerChart.Data = append([]float64{averagePower}, TotalPowerChart.Data...)
-		if len(TotalPowerChart.Data) > 25 {
-			TotalPowerChart.Data = TotalPowerChart.Data[:25]
-		}
-		powerValues = nil
-		lastUpdateTime = currentTime
+func updateTotalPowerChart(watts float64) {
+	if watts > maxPowerSeen {
+		maxPowerSeen = watts * 1.1
 	}
+	scaledValue := int((watts / maxPowerSeen) * 8)
+	if watts > 0 && scaledValue == 0 {
+		scaledValue = 1 // Ensure non-zero values are visible
+	}
+	for i := 0; i < len(powerValues)-1; i++ {
+		powerValues[i] = powerValues[i+1]
+	}
+	powerValues[len(powerValues)-1] = float64(scaledValue)
+	var sum float64
+	count := 0
+	for _, v := range powerValues {
+		if v > 0 { // Only count non-zero values
+			actualWatts := (v / 8) * maxPowerSeen
+			sum += actualWatts
+			count++
+		}
+	}
+	avgWatts := 0.0
+	if count > 0 {
+		avgWatts = sum / float64(count)
+	}
+	sparkline.Data = powerValues
+	sparkline.MaxVal = 8 // Match MaxHeight
+	sparklineGroup.Title = fmt.Sprintf("%.2f W Total (Max: %.2f W)", watts, maxPowerSeen)
+	sparkline.Title = fmt.Sprintf("Avg: %.2f W", avgWatts)
 }
 
 func updateCPUUI(cpuMetrics CPUMetrics) {
-	cpu1Gauge.Title = fmt.Sprintf("E-CPU Usage: %d%% @ %d MHz", cpuMetrics.EClusterActive, cpuMetrics.EClusterFreqMHz)
-	cpu1Gauge.Percent = cpuMetrics.EClusterActive
-	cpu2Gauge.Title = fmt.Sprintf("P-CPU Usage: %d%% @ %d MHz", cpuMetrics.PClusterActive, cpuMetrics.PClusterFreqMHz)
-	cpu2Gauge.Percent = cpuMetrics.PClusterActive
-	TotalPowerChart.Title = fmt.Sprintf("%.2f W Total Power", cpuMetrics.PackageW)
+	coreUsages, err := GetCPUPercentages()
+	if err != nil {
+		stderrLogger.Printf("Error getting CPU percentages: %v\n", err)
+		return
+	}
+	cpuCoreWidget.UpdateUsage(coreUsages)
+	var totalUsage float64
+	for _, usage := range coreUsages {
+		totalUsage += usage
+	}
+	totalUsage /= float64(len(coreUsages))
+	cpuGauge.Percent = int(totalUsage)
+	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) - CPU Usage: %.2f%%",
+		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
+		cpuCoreWidget.eCoreCount,
+		cpuCoreWidget.pCoreCount,
+		totalUsage,
+	)
+	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%%",
+		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
+		cpuCoreWidget.eCoreCount,
+		cpuCoreWidget.pCoreCount,
+		totalUsage,
+	)
 	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.PackageW)
+	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
+		cpuMetrics.CPUW,
+		cpuMetrics.GPUW,
+		cpuMetrics.PackageW,
+		map[bool]string{
+			true:  "Throttled!",
+			false: "Nominal",
+		}[cpuMetrics.Throttled],
+	)
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
@@ -693,6 +1276,30 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 func updateGPUUI(gpuMetrics GPUMetrics) {
 	gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
 	gpuGauge.Percent = int(gpuMetrics.Active)
+
+	// Add GPU history tracking
+	for i := 0; i < len(gpuValues)-1; i++ {
+		gpuValues[i] = gpuValues[i+1]
+	}
+	gpuValues[len(gpuValues)-1] = float64(gpuMetrics.Active)
+
+	// Calculate average GPU usage
+	var sum float64
+	count := 0
+	for _, v := range gpuValues {
+		if v > 0 {
+			sum += v
+			count++
+		}
+	}
+	avgGPU := 0.0
+	if count > 0 {
+		avgGPU = sum / float64(count)
+	}
+
+	gpuSparkline.Data = gpuValues
+	gpuSparkline.MaxVal = 100 // GPU usage is 0-100%
+	gpuSparklineGroup.Title = fmt.Sprintf("GPU: %d%% (Avg: %.1f%%)", gpuMetrics.Active, avgGPU)
 }
 
 func getDiskStorage() (total, used, available string) {
@@ -744,119 +1351,25 @@ func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 	NetworkInfo.Text = fmt.Sprintf("Out: %.1f p/s, %.1f KB/s\n"+"In: %.1f p/s, %.1f KB/s\n"+"Read: %.1f ops/s, %.1f KB/s\n"+"Write: %.1f ops/s, %.1f KB/s\n"+"%s U / %s T / %s A", netdiskMetrics.OutPacketsPerSec, netdiskMetrics.OutBytesPerSec, netdiskMetrics.InPacketsPerSec, netdiskMetrics.InBytesPerSec, netdiskMetrics.ReadOpsPerSec, netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteOpsPerSec, netdiskMetrics.WriteKBytesPerSec, used, total, available)
 }
 
-func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetrics {
-	var data map[string]interface{}
-	err := plist.NewDecoder(strings.NewReader(powermetricsOutput)).Decode(&data)
-	if err != nil {
-		stderrLogger.Fatalf("Error decoding plist: %v\n", err)
-		return cpuMetrics
-	}
+func parseCPUMetrics(data map[string]interface{}, cpuMetrics CPUMetrics) CPUMetrics {
 	processor, ok := data["processor"].(map[string]interface{})
 	if !ok {
 		stderrLogger.Fatalf("Failed to get processor data\n")
 		return cpuMetrics
 	}
-	clusters, ok := processor["clusters"].([]interface{})
+
+	thermal, ok := data["thermal_pressure"].(string)
 	if !ok {
-		stderrLogger.Fatalf("Failed to get clusters data\n")
-		return cpuMetrics
+		stderrLogger.Fatalf("Failed to get thermal data\n")
 	}
-	cpuMetricDict := make(map[string]interface{})
+
+	cpuMetrics.Throttled = thermal != "Nominal"
+
 	eCores := []int{}
 	pCores := []int{}
-	for _, c := range clusters {
-		cluster := c.(map[string]interface{})
-		name := cluster["name"].(string)
-		var freqHz float64
-		switch v := cluster["freq_hz"].(type) {
-		case int64:
-			freqHz = float64(v)
-		case float64:
-			freqHz = v
-		}
-		idleRatio := cluster["idle_ratio"].(float64)
-		cpuMetricDict[name+"_freq_Mhz"] = int(freqHz / 1e6)
-		cpuMetricDict[name+"_active"] = int((1 - idleRatio) * 100)
-		cpus := cluster["cpus"].([]interface{})
-		for _, c := range cpus {
-			cpu := c.(map[string]interface{})
-			var cpuNum int
-			switch v := cpu["cpu"].(type) {
-			case int64:
-				cpuNum = int(v)
-			case uint64:
-				cpuNum = int(v)
-			case float64:
-				cpuNum = int(v)
-			}
-			var cpuFreqHz float64
-			switch v := cpu["freq_hz"].(type) {
-			case int64:
-				cpuFreqHz = float64(v)
-			case float64:
-				cpuFreqHz = v
-			}
-			cpuIdleRatio := cpu["idle_ratio"].(float64)
-			clusterName := "E-Cluster"
-			if !strings.HasPrefix(name, "E") {
-				clusterName = "P-Cluster"
-			}
-			if clusterName == "E-Cluster" {
-				eCores = append(eCores, cpuNum)
-			} else {
-				pCores = append(pCores, cpuNum)
-			}
-			cpuMetricDict[clusterName+strconv.Itoa(cpuNum)+"_freq_Mhz"] = int(cpuFreqHz / 1e6)
-			cpuMetricDict[clusterName+strconv.Itoa(cpuNum)+"_active"] = int((1 - cpuIdleRatio) * 100)
-		}
-	}
 	cpuMetrics.ECores = eCores
 	cpuMetrics.PCores = pCores
-	if _, exists := cpuMetricDict["E-Cluster_active"]; !exists {
-		if e0Active, ok := cpuMetricDict["E0-Cluster_active"].(int); ok {
-			if e1Active, ok := cpuMetricDict["E1-Cluster_active"].(int); ok {
-				cpuMetrics.EClusterActive = (e0Active + e1Active) / 2
-			}
-		}
-		if e0Freq, ok := cpuMetricDict["E0-Cluster_freq_Mhz"].(int); ok {
-			if e1Freq, ok := cpuMetricDict["E1-Cluster_freq_Mhz"].(int); ok {
-				cpuMetrics.EClusterFreqMHz = max(e0Freq, e1Freq)
-			}
-		}
-	} else {
-		if active, ok := cpuMetricDict["E-Cluster_active"].(int); ok {
-			cpuMetrics.EClusterActive = active
-		}
-		if freq, ok := cpuMetricDict["E-Cluster_freq_Mhz"].(int); ok {
-			cpuMetrics.EClusterFreqMHz = freq
-		}
-	}
-	if _, exists := cpuMetricDict["P-Cluster_active"]; !exists {
-		if _, hasP2 := cpuMetricDict["P2-Cluster_active"]; hasP2 {
-			if p0Active, ok := cpuMetricDict["P0-Cluster_active"].(int); ok {
-				if p1Active, ok := cpuMetricDict["P1-Cluster_active"].(int); ok {
-					if p2Active, ok := cpuMetricDict["P2-Cluster_active"].(int); ok {
-						if p3Active, ok := cpuMetricDict["P3-Cluster_active"].(int); ok {
-							cpuMetrics.PClusterActive = (p0Active + p1Active + p2Active + p3Active) / 4
-						}
-					}
-				}
-			}
-		} else {
-			if p0Active, ok := cpuMetricDict["P0-Cluster_active"].(int); ok {
-				if p1Active, ok := cpuMetricDict["P1-Cluster_active"].(int); ok {
-					cpuMetrics.PClusterActive = (p0Active + p1Active) / 2
-				}
-			}
-		}
-	} else {
-		if active, ok := cpuMetricDict["P-Cluster_active"].(int); ok {
-			cpuMetrics.PClusterActive = active
-		}
-		if freq, ok := cpuMetricDict["P-Cluster_freq_Mhz"].(int); ok {
-			cpuMetrics.PClusterFreqMHz = freq
-		}
-	}
+
 	if cpuEnergy, ok := processor["cpu_power"].(float64); ok {
 		cpuMetrics.CPUW = float64(cpuEnergy) / 1000
 	}
@@ -866,19 +1379,7 @@ func parseCPUMetrics(powermetricsOutput string, cpuMetrics CPUMetrics) CPUMetric
 	if combinedPower, ok := processor["combined_power"].(float64); ok {
 		cpuMetrics.PackageW = float64(combinedPower) / 1000
 	}
-	if _, exists := cpuMetricDict["P-Cluster_freq_Mhz"]; !exists {
-		var totalFreq float64
-		var clusterCount int
-		for i := 0; i <= 50; i++ {
-			if freq, ok := cpuMetricDict[fmt.Sprintf("P-Cluster%d_freq_Mhz", i)].(int); ok {
-				totalFreq += float64(freq)
-				clusterCount++
-			}
-		}
-		if clusterCount > 0 {
-			cpuMetrics.PClusterFreqMHz = int(totalFreq / float64(clusterCount))
-		}
-	}
+
 	return cpuMetrics
 }
 
