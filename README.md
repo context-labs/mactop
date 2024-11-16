@@ -4,7 +4,7 @@
 
 `mactop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips written by Carsen Klock. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
 
-![mactop](screenshotnew.jpg)
+![mactop](screenshotm.png)
 
 ## Compatibility
 
@@ -103,9 +103,9 @@ Use the following keys to interact with the application while its running:
 - `l`: Toggle the main display's layout.
 - `h`: Toggle the help menu.
 
-## Example Theme (Green) Screenshot (sudo mactop -c green)
+## Example Theme (Green) Screenshot (sudo mactop -c green) on Advanced layout (Hit "l" key to toggle)
 
-![mactop theme](screenshot3.png)
+![mactop theme](screenshota.png)
 
 ## Confirmed tested working M series chips
 
