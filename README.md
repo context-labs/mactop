@@ -13,9 +13,9 @@
 
 ## Features
 
-- Apple Silicon Monitor Top written in Go Lang (Under 1,000 lines of code)
-- Real-time CPU and GPU power usage display.
-- Detailed metrics for different CPU clusters (E-Cores and P-Cores).
+- Apple Silicon Monitor Top written in Go Lang and CGO
+- Real-time CPU and GPU power wattage usage display.
+- Detailed native metrics for CPU cores (E and P cores) (Apple's Mach Kernel API)
 - Memory usage and swap information.
 - Network usage information
 - Disk Activity Read/Write
@@ -141,7 +141,8 @@ Contributions are what make the open-source community such an amazing place to l
 - `sysctl`: For CPU model information
 - `system_profiler`: For GPU Core Count
 - `psutil`: For memory and swap metrics
-- `powermetrics`: For majority of CPU, GPU, Network, and Disk metrics
+- `powermetrics`: For majority of GPU, Network, and Disk metrics
+- `host_processor_info`: For CPU metrics (E and P cores) Apple Mach Kernel API in CGO
 
 ## License
 
@@ -162,3 +163,4 @@ This tool is not officially supported by Apple. It is provided as is, and may no
 - [termui](https://github.com/gizak/termui) for the terminal UI framework.
 - [gopsutil](https://github.com/shirou/gopsutil) for system memory monitoring.
 - [asitop](https://github.com/tlkh/asitop) for the original inspiration!
+- [htop](https://github.com/htop-dev/htop) for the process list and CPU cores inspiration!

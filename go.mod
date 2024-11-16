@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/caseymrm/go-smc v0.0.0-20180521175121-66b52ab0ffbf // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
