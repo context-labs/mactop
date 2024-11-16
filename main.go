@@ -37,7 +37,7 @@ import (
 
 var (
 	version                                      = "v0.2.2"
-	cpu1Gauge, cpu2Gauge, gpuGauge, memoryGauge  *w.Gauge
+	cpuGauge, gpuGauge, memoryGauge              *w.Gauge
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
 	processList                                  *w.List
@@ -374,7 +374,7 @@ func setupUI() {
 	processList.SelectedRow = 0
 
 	gauges := []*w.Gauge{
-		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
+		w.NewGauge(), w.NewGauge(), w.NewGauge(),
 	}
 	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage"}
 	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
@@ -383,7 +383,7 @@ func setupUI() {
 		gauge.Title = titles[i]
 		gauge.BarColor = colors[i]
 	}
-	cpu1Gauge, cpu2Gauge, gpuGauge, memoryGauge = gauges[0], gauges[1], gauges[2], gauges[3]
+	cpuGauge, gpuGauge, memoryGauge = gauges[0], gauges[1], gauges[2]
 
 	PowerChart, NetworkInfo = w.NewParagraph(), w.NewParagraph()
 	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk Info"
@@ -408,6 +408,11 @@ func setupUI() {
 		eCoreCount,
 		pCoreCount,
 	)
+	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP)",
+		eCoreCount+pCoreCount,
+		eCoreCount,
+		pCoreCount,
+	)
 }
 
 func setupGrid() {
@@ -415,7 +420,7 @@ func setupGrid() {
 
 	grid.Set(
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0, cpuCoreWidget),
+			ui.NewCol(1.0, cpuGauge),
 		),
 		ui.NewRow(2.0/4,
 			ui.NewCol(1.0/2,
@@ -461,7 +466,7 @@ func switchGridLayout() {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/4,
-				ui.NewCol(1.0, cpuCoreWidget),
+				ui.NewCol(1.0, cpuGauge),
 			),
 			ui.NewRow(2.0/4,
 				ui.NewCol(1.0/2,
@@ -783,11 +788,11 @@ func cycleColors() {
 	ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 	ui.Theme.BarChart.Bars = []ui.Color{color}
 
-	cpu1Gauge.BarColor, cpu2Gauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color, color
+	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
 	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color)
 	processList.SelectedRowStyle, modelText.TextStyle, helpText.TextStyle = ui.NewStyle(ui.ColorBlack, color), ui.NewStyle(color), ui.NewStyle(color)
 
-	cpu1Gauge.BorderStyle.Fg, cpu1Gauge.TitleStyle.Fg, cpu2Gauge.BorderStyle.Fg, cpu2Gauge.TitleStyle.Fg = color, color, color, color
+	cpuGauge.BorderStyle.Fg, cpuGauge.TitleStyle.Fg = color, color
 	gpuGauge.BorderStyle.Fg, gpuGauge.TitleStyle.Fg, memoryGauge.BorderStyle.Fg, memoryGauge.TitleStyle.Fg = color, color, color, color
 	processList.BorderStyle.Fg, processList.TitleStyle.Fg, NetworkInfo.BorderStyle.Fg, NetworkInfo.TitleStyle.Fg = color, color, color, color
 	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg = color, color
@@ -896,7 +901,7 @@ func main() {
 		ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 		ui.Theme.BarChart.Bars = []ui.Color{color}
 		setupUI()
-		cpu1Gauge.BarColor, cpu2Gauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color, color
+		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
 		processList.TextStyle = ui.NewStyle(color)
 		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
 	} else {
@@ -1212,7 +1217,13 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 		totalUsage += usage
 	}
 	totalUsage /= float64(len(coreUsages))
-
+	cpuGauge.Percent = int(totalUsage)
+	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) - CPU Usage: %.2f%%",
+		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
+		cpuCoreWidget.eCoreCount,
+		cpuCoreWidget.pCoreCount,
+		totalUsage,
+	)
 	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%%",
 		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
 		cpuCoreWidget.eCoreCount,
