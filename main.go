@@ -41,8 +41,8 @@ var (
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
 	processList                                  *w.List
-	sparkline                                    *w.Sparkline
-	sparklineGroup                               *w.SparklineGroup
+	sparkline, gpuSparkline                      *w.Sparkline
+	sparklineGroup, gpuSparklineGroup            *w.SparklineGroup
 	cpuCoreWidget                                *CPUCoreWidget
 	selectedProcess                              int
 	powerValues                                  = make([]float64, 35)
@@ -67,6 +67,7 @@ var (
 	maxPowerSeen                                 = 0.1
 	powerHistory                                 = make([]float64, 100)
 	maxPower                                     = 0.0 // Track maximum power for better scaling
+	gpuValues                                    = make([]float64, 65)
 )
 
 type CPUUsage struct {
@@ -392,6 +393,7 @@ func setupUI() {
 	termWidth, _ := ui.TerminalDimensions()
 	numPoints := (termWidth / 2) / 2
 	powerValues = make([]float64, numPoints)
+	gpuValues = make([]float64, numPoints)
 
 	sparkline = w.NewSparkline()
 	sparkline.LineColor = ui.ColorGreen
@@ -399,6 +401,14 @@ func setupUI() {
 	sparkline.Data = powerValues
 
 	sparklineGroup = w.NewSparklineGroup(sparkline)
+
+	gpuSparkline = w.NewSparkline()
+	gpuSparkline.LineColor = ui.ColorGreen
+	gpuSparkline.MaxHeight = 10
+	gpuSparkline.Data = gpuValues
+	gpuSparklineGroup = w.NewSparklineGroup(gpuSparkline)
+	gpuSparklineGroup.Title = "GPU Usage History"
+
 	updateProcessList()
 
 	cpuCoreWidget = NewCPUCoreWidget(appleSiliconModel)
@@ -422,6 +432,7 @@ func setupGrid() {
 	grid.Set(
 		ui.NewRow(1.0/4,
 			ui.NewCol(1.0, cpuGauge),
+			// ui.NewCol(1.0/2, gpuSparklineGroup),
 		),
 		ui.NewRow(2.0/4,
 			ui.NewCol(1.0/2,
@@ -1088,9 +1099,25 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 		case <-done:
 			cmd.Process.Kill()
 			return
-		case cpumetricsChan <- parseCPUMetrics(data, NewCPUMetrics()):
-		case gpumetricsChan <- parseGPUMetrics(data):
-		case netdiskMetricsChan <- parseNetDiskMetrics(data):
+		default:
+			// Send all metrics at once
+			cpuMetrics := parseCPUMetrics(data, NewCPUMetrics())
+			gpuMetrics := parseGPUMetrics(data)
+			netdiskMetrics := parseNetDiskMetrics(data)
+
+			// Non-blocking sends
+			select {
+			case cpumetricsChan <- cpuMetrics:
+			default:
+			}
+			select {
+			case gpumetricsChan <- gpuMetrics:
+			default:
+			}
+			select {
+			case netdiskMetricsChan <- netdiskMetrics:
+			default:
+			}
 		}
 	}
 }
@@ -1249,6 +1276,30 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 func updateGPUUI(gpuMetrics GPUMetrics) {
 	gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
 	gpuGauge.Percent = int(gpuMetrics.Active)
+
+	// Add GPU history tracking
+	for i := 0; i < len(gpuValues)-1; i++ {
+		gpuValues[i] = gpuValues[i+1]
+	}
+	gpuValues[len(gpuValues)-1] = float64(gpuMetrics.Active)
+
+	// Calculate average GPU usage
+	var sum float64
+	count := 0
+	for _, v := range gpuValues {
+		if v > 0 {
+			sum += v
+			count++
+		}
+	}
+	avgGPU := 0.0
+	if count > 0 {
+		avgGPU = sum / float64(count)
+	}
+
+	gpuSparkline.Data = gpuValues
+	gpuSparkline.MaxVal = 100 // GPU usage is 0-100%
+	gpuSparklineGroup.Title = fmt.Sprintf("GPU: %d%% (Avg: %.1f%%)", gpuMetrics.Active, avgGPU)
 }
 
 func getDiskStorage() (total, used, available string) {
