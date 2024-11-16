@@ -82,6 +82,7 @@ type CPUMetrics struct {
 	CoreMetrics                                                      map[string]int
 	CPUW, GPUW, PackageW                                             float64
 	CoreUsages                                                       []float64
+	Throttled                                                        bool
 }
 
 type NetDiskMetrics struct {
@@ -1231,7 +1232,15 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 		totalUsage,
 	)
 	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W", cpuMetrics.CPUW, cpuMetrics.GPUW, cpuMetrics.PackageW)
+	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
+		cpuMetrics.CPUW,
+		cpuMetrics.GPUW,
+		cpuMetrics.PackageW,
+		map[bool]string{
+			true:  "Throttled!",
+			false: "Nominal",
+		}[cpuMetrics.Throttled],
+	)
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
@@ -1297,6 +1306,14 @@ func parseCPUMetrics(data map[string]interface{}, cpuMetrics CPUMetrics) CPUMetr
 		stderrLogger.Fatalf("Failed to get processor data\n")
 		return cpuMetrics
 	}
+
+	thermal, ok := data["thermal_pressure"].(string)
+	if !ok {
+		stderrLogger.Fatalf("Failed to get thermal data\n")
+	}
+
+	cpuMetrics.Throttled = thermal != "Nominal"
+
 	eCores := []int{}
 	pCores := []int{}
 	cpuMetrics.ECores = eCores
@@ -1311,6 +1328,7 @@ func parseCPUMetrics(data map[string]interface{}, cpuMetrics CPUMetrics) CPUMetr
 	if combinedPower, ok := processor["combined_power"].(float64); ok {
 		cpuMetrics.PackageW = float64(combinedPower) / 1000
 	}
+
 	return cpuMetrics
 }
 
