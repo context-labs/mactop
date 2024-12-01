@@ -1073,10 +1073,11 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	}()
 
 	// Create buffered reader with larger buffer
-	reader := bufio.NewReaderSize(stdout, 1024*1024) // 1MB buffer
+	const bufferSize = 10 * 1024 * 1024 // 10MB
+	reader := bufio.NewReaderSize(stdout, bufferSize)
 
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+	scanner.Buffer(make([]byte, bufferSize), bufferSize)
 
 	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		if atEOF && len(data) == 0 {
