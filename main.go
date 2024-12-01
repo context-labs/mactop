@@ -1065,7 +1065,19 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}
-	scanner := bufio.NewScanner(stdout)
+
+	defer func() {
+		if err := cmd.Process.Kill(); err != nil {
+			stderrLogger.Fatalf("ERROR: Failed to kill powermetrics: %v", err)
+		}
+	}()
+
+	// Create buffered reader with larger buffer
+	reader := bufio.NewReaderSize(stdout, 1024*1024) // 1MB buffer
+
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer
+
 	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		if atEOF && len(data) == 0 {
 			return 0, nil, nil
@@ -1080,27 +1092,36 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			}
 		}
 		if atEOF {
+			if start >= 0 {
+				return len(data), data[start:], nil
+			}
 			return len(data), nil, nil
 		}
 		return 0, nil, nil
 	})
+	retryCount := 0
+	maxRetries := 3
 	for scanner.Scan() {
-		plistData := scanner.Text()
-		if !strings.Contains(plistData, "<?xml") || !strings.Contains(plistData, "</plist>") {
-			continue
-		}
-		var data map[string]interface{}
-		err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
-		if err != nil {
-			log.Printf("Error decoding plist: %v", err)
-			continue
-		}
 		select {
 		case <-done:
-			cmd.Process.Kill()
 			return
 		default:
-			// Send all metrics at once
+			plistData := scanner.Text()
+			if !strings.Contains(plistData, "<?xml") || !strings.Contains(plistData, "</plist>") {
+				retryCount++
+				if retryCount >= maxRetries {
+					retryCount = 0
+					continue
+				}
+				continue
+			}
+			retryCount = 0 // Reset retry counter on successful parse
+			var data map[string]interface{}
+			err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
+			if err != nil {
+				log.Printf("Error decoding plist: %v", err)
+				continue
+			}
 			cpuMetrics := parseCPUMetrics(data, NewCPUMetrics())
 			gpuMetrics := parseGPUMetrics(data)
 			netdiskMetrics := parseNetDiskMetrics(data)
