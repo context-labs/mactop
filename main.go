@@ -29,6 +29,11 @@ import (
 	"time"
 	"unsafe"
 
+	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
 	"github.com/shirou/gopsutil/mem"
@@ -36,7 +41,7 @@ import (
 )
 
 var (
-	version                                      = "v0.2.2"
+	version                                      = "v0.2.3"
 	cpuGauge, gpuGauge, memoryGauge              *w.Gauge
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
@@ -67,8 +72,68 @@ var (
 	maxPowerSeen                                 = 0.1
 	powerHistory                                 = make([]float64, 100)
 	maxPower                                     = 0.0 // Track maximum power for better scaling
-	gpuValues                                    = make([]float64, 65)
+	gpuValues                                    = make([]float64, 100)
+	prometheusPort                               string
 )
+
+var (
+	// Prometheus metrics
+	cpuUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_cpu_usage_percent",
+			Help: "Current Total CPU usage percentage",
+		},
+	)
+
+	gpuUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_gpu_usage_percent",
+			Help: "Current GPU usage percentage",
+		},
+	)
+
+	gpuFreqMHz = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_gpu_freq_mhz",
+			Help: "Current GPU frequency in MHz",
+		},
+	)
+
+	powerUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "mactop_power_watts",
+			Help: "Current power usage in watts",
+		},
+		[]string{"component"}, // "cpu", "gpu", "total"
+	)
+
+	memoryUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "mactop_memory_gb",
+			Help: "Memory usage in GB",
+		},
+		[]string{"type"}, // "used", "total", "swap_used", "swap_total"
+	)
+)
+
+func startPrometheusServer(port string) {
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(cpuUsage)
+	registry.MustRegister(gpuUsage)
+	registry.MustRegister(gpuFreqMHz)
+	registry.MustRegister(powerUsage)
+	registry.MustRegister(memoryUsage)
+
+	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+
+	http.Handle("/metrics", handler)
+	go func() {
+		err := http.ListenAndServe(":"+port, nil)
+		if err != nil {
+			stderrLogger.Printf("Failed to start Prometheus metrics server: %v\n", err)
+		}
+	}()
+}
 
 type CPUUsage struct {
 	User   float64
@@ -364,7 +429,31 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
-	helpText.Text = "mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\nRepo: github.com/context-labs/mactop\n\nControls:\n- r: Refresh the UI data manually\n- c: Cycle through UI color themes\n- p: Toggle party mode (color cycling)\n- l: Toggle the main display's layout\n- h or ?: Toggle this help menu\n- q or <C-c>: Quit the application\n\nStart Flags:\n--help, -h: Show this help menu\n--version, -v: Show the version of mactop\n--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\nVersion: " + version
+	prometheusStatus := "Disabled"
+	if prometheusPort != "" {
+		prometheusStatus = fmt.Sprintf("Enabled (Port: %s)", prometheusPort)
+	}
+	helpText.Text = fmt.Sprintf(
+		"mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\n"+
+			"Repo: github.com/context-labs/mactop\n\n"+
+			"Prometheus Metrics: %s\n\n"+
+			"Controls:\n"+
+			"- r: Refresh the UI data manually\n"+
+			"- c: Cycle through UI color themes\n"+
+			"- p: Toggle party mode (color cycling)\n"+
+			"- l: Toggle the main display's layout\n"+
+			"- h or ?: Toggle this help menu\n"+
+			"- q or <C-c>: Quit the application\n\n"+
+			"Start Flags:\n"+
+			"--help, -h: Show this help menu\n"+
+			"--version, -v: Show the version of mactop\n"+
+			"--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n"+
+			"--prometheus, -p: Set and enable a Prometheus metrics port. Default is none. (e.g. --prometheus=9090)\n"+
+			"--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\n"+
+			"Version: %s",
+		prometheusStatus,
+		version,
+	)
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
 
 	processList = w.NewList()
@@ -392,8 +481,9 @@ func setupUI() {
 
 	termWidth, _ := ui.TerminalDimensions()
 	numPoints := (termWidth / 2) / 2
+	numPointsGPU := (termWidth / 2)
 	powerValues = make([]float64, numPoints)
-	gpuValues = make([]float64, numPoints)
+	gpuValues = make([]float64, numPointsGPU)
 
 	sparkline = w.NewSparkline()
 	sparkline.LineColor = ui.ColorGreen
@@ -404,7 +494,7 @@ func setupUI() {
 
 	gpuSparkline = w.NewSparkline()
 	gpuSparkline.LineColor = ui.ColorGreen
-	gpuSparkline.MaxHeight = 10
+	gpuSparkline.MaxHeight = 100
 	gpuSparkline.Data = gpuValues
 	gpuSparklineGroup = w.NewSparklineGroup(gpuSparkline)
 	gpuSparklineGroup.Title = "GPU Usage History"
@@ -432,7 +522,7 @@ func setupGrid() {
 	grid.Set(
 		ui.NewRow(1.0/4,
 			ui.NewCol(1.0, cpuGauge),
-			// ui.NewCol(1.0/2, gpuSparklineGroup),
+			// ui.NewCol(1.0/2, gpuGauge),
 		),
 		ui.NewRow(2.0/4,
 			ui.NewCol(1.0/2,
@@ -818,6 +908,14 @@ func cycleColors() {
 		sparklineGroup.BorderStyle = ui.NewStyle(color)
 		sparklineGroup.TitleStyle = ui.NewStyle(color)
 	}
+	if gpuSparkline != nil {
+		gpuSparkline.LineColor = color
+		gpuSparkline.TitleStyle = ui.NewStyle(color)
+	}
+	if gpuSparklineGroup != nil {
+		gpuSparklineGroup.BorderStyle = ui.NewStyle(color)
+		gpuSparklineGroup.TitleStyle = ui.NewStyle(color)
+	}
 
 	cpuCoreWidget.BorderStyle.Fg, cpuCoreWidget.TitleStyle.Fg = color, color
 	processList.TextStyle = ui.NewStyle(color)
@@ -858,6 +956,14 @@ func main() {
 				fmt.Println("Error: --color flag requires a color value")
 				os.Exit(1)
 			}
+		case "--prometheus", "-p":
+			if i+1 < len(os.Args) {
+				prometheusPort = os.Args[i+1]
+				i++
+			} else {
+				fmt.Println("Error: --prometheus flag requires a port number")
+				os.Exit(1)
+			}
 		case "--interval", "-i":
 			if i+1 < len(os.Args) {
 				interval, err = strconv.Atoi(os.Args[i+1])
@@ -889,6 +995,11 @@ func main() {
 	}
 	defer ui.Close()
 	StderrToLogfile(logfile)
+
+	if prometheusPort != "" {
+		startPrometheusServer(prometheusPort)
+		stderrLogger.Printf("Prometheus metrics available at http://localhost:%s/metrics\n", prometheusPort)
+	}
 	if setColor {
 		var color ui.Color
 		switch colorName {
@@ -1293,6 +1404,16 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
+
+	cpuUsage.Set(float64(totalUsage))
+	powerUsage.With(prometheus.Labels{"component": "cpu"}).Set(cpuMetrics.CPUW)
+	powerUsage.With(prometheus.Labels{"component": "total"}).Set(cpuMetrics.PackageW)
+	powerUsage.With(prometheus.Labels{"component": "gpu"}).Set(cpuMetrics.GPUW)
+
+	memoryUsage.With(prometheus.Labels{"type": "used"}).Set(float64(memoryMetrics.Used) / 1024 / 1024 / 1024)
+	memoryUsage.With(prometheus.Labels{"type": "total"}).Set(float64(memoryMetrics.Total) / 1024 / 1024 / 1024)
+	memoryUsage.With(prometheus.Labels{"type": "swap_used"}).Set(float64(memoryMetrics.SwapUsed) / 1024 / 1024 / 1024)
+	memoryUsage.With(prometheus.Labels{"type": "swap_total"}).Set(float64(memoryMetrics.SwapTotal) / 1024 / 1024 / 1024)
 }
 
 func updateGPUUI(gpuMetrics GPUMetrics) {
@@ -1321,7 +1442,10 @@ func updateGPUUI(gpuMetrics GPUMetrics) {
 
 	gpuSparkline.Data = gpuValues
 	gpuSparkline.MaxVal = 100 // GPU usage is 0-100%
-	gpuSparklineGroup.Title = fmt.Sprintf("GPU: %d%% (Avg: %.1f%%)", gpuMetrics.Active, avgGPU)
+	gpuSparklineGroup.Title = fmt.Sprintf("GPU History: %d%% (Avg: %.1f%%)", gpuMetrics.Active, avgGPU)
+
+	gpuUsage.Set(float64(gpuMetrics.Active))
+	gpuFreqMHz.Set(float64(gpuMetrics.FreqMHz))
 }
 
 func getDiskStorage() (total, used, available string) {

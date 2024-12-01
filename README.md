@@ -26,6 +26,7 @@
 - Processes list (sorted by CPU usage)
 - Disk Storage (Used, Total, Available)
 - Party Mode (Randomly cycles through colors)
+- Optional Prometheus Metrics server (default is disabled)
 - Support for all Apple Silicon models.
 
 ## Install via Homebrew
@@ -91,6 +92,7 @@ sudo mactop --interval 1000 --color green
 - `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
 - `--color` or `-c`: Set the UI color. Default is white. 
 Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)
+- `--prometheus` or `-p`: Set and enable the local Prometheus metrics server on the given port. Default is disabled. (e.g. -p 2112 to enable Prometheus metrics on port 2112)
 - `--version` or `-v`: Print the version of mactop.
 - `--help` or `-h`: Show a help message about these flags and how to run mactop.
 
