@@ -1060,10 +1060,10 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Fatal(err)
+		stderrLogger.Fatal(err)
 	}
 	if err := cmd.Start(); err != nil {
-		log.Fatal(err)
+		stderrLogger.Fatal(err)
 	}
 
 	defer func() {
@@ -1120,7 +1120,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			var data map[string]interface{}
 			err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
 			if err != nil {
-				log.Printf("Error decoding plist: %v", err)
+				stderrLogger.Printf("Error decoding plist: %v", err)
 				continue
 			}
 			cpuMetrics := parseCPUMetrics(data, NewCPUMetrics())
