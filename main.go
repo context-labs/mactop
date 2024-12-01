@@ -1060,12 +1060,25 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Fatal(err)
+		stderrLogger.Fatal(err)
 	}
 	if err := cmd.Start(); err != nil {
-		log.Fatal(err)
+		stderrLogger.Fatal(err)
 	}
-	scanner := bufio.NewScanner(stdout)
+
+	defer func() {
+		if err := cmd.Process.Kill(); err != nil {
+			stderrLogger.Fatalf("ERROR: Failed to kill powermetrics: %v", err)
+		}
+	}()
+
+	// Create buffered reader with larger buffer
+	const bufferSize = 10 * 1024 * 1024 // 10MB
+	reader := bufio.NewReaderSize(stdout, bufferSize)
+
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, bufferSize), bufferSize)
+
 	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		if atEOF && len(data) == 0 {
 			return 0, nil, nil
@@ -1080,27 +1093,36 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			}
 		}
 		if atEOF {
+			if start >= 0 {
+				return len(data), data[start:], nil
+			}
 			return len(data), nil, nil
 		}
 		return 0, nil, nil
 	})
+	retryCount := 0
+	maxRetries := 3
 	for scanner.Scan() {
-		plistData := scanner.Text()
-		if !strings.Contains(plistData, "<?xml") || !strings.Contains(plistData, "</plist>") {
-			continue
-		}
-		var data map[string]interface{}
-		err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
-		if err != nil {
-			log.Printf("Error decoding plist: %v", err)
-			continue
-		}
 		select {
 		case <-done:
-			cmd.Process.Kill()
 			return
 		default:
-			// Send all metrics at once
+			plistData := scanner.Text()
+			if !strings.Contains(plistData, "<?xml") || !strings.Contains(plistData, "</plist>") {
+				retryCount++
+				if retryCount >= maxRetries {
+					retryCount = 0
+					continue
+				}
+				continue
+			}
+			retryCount = 0 // Reset retry counter on successful parse
+			var data map[string]interface{}
+			err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
+			if err != nil {
+				stderrLogger.Printf("Error decoding plist: %v", err)
+				continue
+			}
 			cpuMetrics := parseCPUMetrics(data, NewCPUMetrics())
 			gpuMetrics := parseGPUMetrics(data)
 			netdiskMetrics := parseNetDiskMetrics(data)
