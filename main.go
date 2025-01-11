@@ -42,7 +42,7 @@ import (
 
 var (
 	version                                      = "v0.2.3"
-	cpuGauge, gpuGauge, memoryGauge              *w.Gauge
+	cpuGauge, gpuGauge, memoryGauge, aneGauge    *w.Gauge
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
 	processList                                  *w.List
@@ -146,7 +146,7 @@ type CPUMetrics struct {
 	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz int
 	ECores, PCores                                                   []int
 	CoreMetrics                                                      map[string]int
-	CPUW, GPUW, PackageW                                             float64
+	ANEW, CPUW, GPUW, PackageW                                       float64
 	CoreUsages                                                       []float64
 	Throttled                                                        bool
 }
@@ -465,16 +465,16 @@ func setupUI() {
 	processList.SelectedRow = 0
 
 	gauges := []*w.Gauge{
-		w.NewGauge(), w.NewGauge(), w.NewGauge(),
+		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
 	}
-	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage"}
+	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage", "ANE Usage"}
 	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
 	for i, gauge := range gauges {
 		gauge.Percent = 0
 		gauge.Title = titles[i]
 		gauge.BarColor = colors[i]
 	}
-	cpuGauge, gpuGauge, memoryGauge = gauges[0], gauges[1], gauges[2]
+	cpuGauge, gpuGauge, memoryGauge, aneGauge = gauges[0], gauges[1], gauges[2], gauges[3]
 
 	PowerChart, NetworkInfo = w.NewParagraph(), w.NewParagraph()
 	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk Info"
@@ -521,12 +521,12 @@ func setupGrid() {
 
 	grid.Set(
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0, cpuGauge),
-			// ui.NewCol(1.0/2, gpuGauge),
+			ui.NewCol(1.0/2, cpuGauge),
+			ui.NewCol(1.0/2, gpuGauge),
 		),
 		ui.NewRow(2.0/4,
 			ui.NewCol(1.0/2,
-				ui.NewRow(1.0/2, gpuGauge),
+				ui.NewRow(1.0/2, aneGauge),
 				ui.NewRow(1.0/2,
 					ui.NewCol(1.0/2, PowerChart),
 					ui.NewCol(1.0/2, sparklineGroup),
@@ -568,7 +568,8 @@ func switchGridLayout() {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/4,
-				ui.NewCol(1.0, cpuGauge),
+				ui.NewCol(1.0/2, cpuGauge),
+				ui.NewCol(1.0/2, aneGauge),
 			),
 			ui.NewRow(2.0/4,
 				ui.NewCol(1.0/2,
@@ -890,11 +891,12 @@ func cycleColors() {
 	ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 	ui.Theme.BarChart.Bars = []ui.Color{color}
 
-	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
+	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor, aneGauge.BarColor = color, color, color, color
 	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color)
 	processList.SelectedRowStyle, modelText.TextStyle, helpText.TextStyle = ui.NewStyle(ui.ColorBlack, color), ui.NewStyle(color), ui.NewStyle(color)
 
 	cpuGauge.BorderStyle.Fg, cpuGauge.TitleStyle.Fg = color, color
+	aneGauge.BorderStyle.Fg, aneGauge.TitleStyle.Fg = color, color
 	gpuGauge.BorderStyle.Fg, gpuGauge.TitleStyle.Fg, memoryGauge.BorderStyle.Fg, memoryGauge.TitleStyle.Fg = color, color, color, color
 	processList.BorderStyle.Fg, processList.TitleStyle.Fg, NetworkInfo.BorderStyle.Fg, NetworkInfo.TitleStyle.Fg = color, color, color, color
 	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg = color, color
@@ -1024,7 +1026,7 @@ func main() {
 		ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 		ui.Theme.BarChart.Bars = []ui.Color{color}
 		setupUI()
-		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
+		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor, aneGauge.BarColor = color, color, color, color
 		processList.TextStyle = ui.NewStyle(color)
 		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
 	} else {
@@ -1391,10 +1393,15 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 		cpuCoreWidget.pCoreCount,
 		totalUsage,
 	)
+	aneUtil := float64(cpuMetrics.ANEW / 1 / 8.0 * 100)
+	aneGauge.Title = fmt.Sprintf("ANE Usage: %.2f%% @ %.2f W", aneUtil, cpuMetrics.ANEW)
+	aneGauge.Percent = int(aneUtil)
+
 	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
+	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nANE Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
 		cpuMetrics.CPUW,
 		cpuMetrics.GPUW,
+		cpuMetrics.ANEW,
 		cpuMetrics.PackageW,
 		map[bool]string{
 			true:  "Throttled!",
@@ -1521,6 +1528,9 @@ func parseCPUMetrics(data map[string]interface{}, cpuMetrics CPUMetrics) CPUMetr
 	}
 	if gpuEnergy, ok := processor["gpu_power"].(float64); ok {
 		cpuMetrics.GPUW = float64(gpuEnergy) / 1000
+	}
+	if aneEnergy, ok := processor["ane_power"].(float64); ok {
+		cpuMetrics.ANEW = float64(aneEnergy) / 1000
 	}
 	if combinedPower, ok := processor["combined_power"].(float64); ok {
 		cpuMetrics.PackageW = float64(combinedPower) / 1000
