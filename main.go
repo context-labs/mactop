@@ -1319,8 +1319,8 @@ func getProcessList() []ProcessMetrics {
 		if len(fields) < 11 {
 			continue
 		}
-		cpu, _ := strconv.ParseFloat(fields[2], 64)
-		mem, _ := strconv.ParseFloat(fields[3], 64)
+		cpu, _ := strconv.ParseFloat(replaceCommas(fields[2]), 64)
+		mem, _ := strconv.ParseFloat(replaceCommas(fields[3]), 64)
 		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)
 		pid, _ := strconv.Atoi(fields[1])
@@ -1333,6 +1333,10 @@ func getProcessList() []ProcessMetrics {
 		return processes[i].CPU > processes[j].CPU
 	})
 	return processes
+}
+
+func replaceCommas(s string) string {
+	return strings.Replace(s, ",", ".", -1)
 }
 
 func updateTotalPowerChart(watts float64) {
