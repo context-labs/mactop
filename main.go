@@ -73,6 +73,7 @@ var (
 	powerHistory                                 = make([]float64, 100)
 	maxPower                                     = 0.0 // Track maximum power for better scaling
 	gpuValues                                    = make([]float64, 100)
+	headless                                     = false
 	prometheusPort                               string
 )
 
@@ -926,6 +927,13 @@ func cycleColors() {
 	ui.Render(processList)
 }
 
+func block() {
+	for {
+		fmt.Printf("%v+\n", time.Now())
+		time.Sleep(time.Second * 3600)
+	}
+}
+
 func main() {
 	var (
 		colorName             string
@@ -936,11 +944,13 @@ func main() {
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
-			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nYou must use sudo to run mactop, as powermetrics requires root privileges.\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
+			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color] [--headless]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n--headless: Run without any UI\n\nYou must use sudo to run mactop, as powermetrics requires root privileges.\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
 			os.Exit(0)
 		case "--version", "-v":
 			fmt.Println("mactop version:", version)
 			os.Exit(0)
+		case "--headless", "-l":
+			headless = true
 		case "--test", "-t":
 			if i+1 < len(os.Args) {
 				testInput := os.Args[i+1]
@@ -990,17 +1000,20 @@ func main() {
 	}
 	defer logfile.Close()
 
-	if err := ui.Init(); err != nil {
-		stderrLogger.Fatalf("failed to initialize termui: %v", err)
+	if !headless {
+		if err := ui.Init(); err != nil {
+			stderrLogger.Fatalf("failed to initialize termui: %v", err)
+		}
+		defer ui.Close()
 	}
-	defer ui.Close()
+
 	StderrToLogfile(logfile)
 
 	if prometheusPort != "" {
 		startPrometheusServer(prometheusPort)
 		stderrLogger.Printf("Prometheus metrics available at http://localhost:%s/metrics\n", prometheusPort)
 	}
-	if setColor {
+	if setColor && !headless {
 		var color ui.Color
 		switch colorName {
 		case "green":
@@ -1027,19 +1040,24 @@ func main() {
 		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
 		processList.TextStyle = ui.NewStyle(color)
 		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
-	} else {
+	} else if !headless {
 		setupUI()
 	}
 	if setInterval {
 		updateInterval = interval
 	}
-	setupGrid()
-	termWidth, termHeight := ui.TerminalDimensions()
-	grid.SetRect(0, 0, termWidth, termHeight)
+
+	if !headless {
+		setupGrid()
+		termWidth, termHeight := ui.TerminalDimensions()
+		grid.SetRect(0, 0, termWidth, termHeight)
+	}
+
 	cpuMetricsChan := make(chan CPUMetrics, 1)
 	gpuMetricsChan := make(chan GPUMetrics, 1)
 	netdiskMetricsChan := make(chan NetDiskMetrics, 1)
 	go collectMetrics(done, cpuMetricsChan, gpuMetricsChan, netdiskMetricsChan)
+
 	go func() {
 		ticker := time.NewTicker(time.Duration(updateInterval) * time.Millisecond)
 		defer ticker.Stop()
@@ -1048,14 +1066,20 @@ func main() {
 			case cpuMetrics := <-cpuMetricsChan:
 				updateCPUUI(cpuMetrics)
 				updateTotalPowerChart(cpuMetrics.PackageW)
-				ui.Render(grid)
+				render()
 			case gpuMetrics := <-gpuMetricsChan:
 				updateGPUUI(gpuMetrics)
-				ui.Render(grid)
+				render()
 			case netdiskMetrics := <-netdiskMetricsChan:
+				if headless {
+					continue
+				}
 				updateNetDiskUI(netdiskMetrics)
-				ui.Render(grid)
+				render()
 			case <-ticker.C:
+				if headless {
+					continue
+				}
 				percentages, err := GetCPUPercentages()
 				if err != nil {
 					stderrLogger.Printf("Error getting CPU percentages: %v\n", err)
@@ -1075,13 +1099,13 @@ func main() {
 					totalUsage,
 				)
 				updateProcessList()
-				ui.Render(grid)
+				render()
 			case <-done:
 				return
 			}
 		}
 	}()
-	ui.Render(grid)
+	render()
 	done := make(chan struct{})
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -1091,62 +1115,83 @@ func main() {
 		}
 	}()
 	lastUpdateTime = time.Now()
-	uiEvents := ui.PollEvents()
-	for {
-		select {
-		case e := <-uiEvents:
-			handleProcessListEvents(e)
-			switch e.ID {
-			case "q", "<C-c>":
-				close(done)
+
+	// Block main goroutine until program is manually stopped
+	if headless {
+		go block()
+		quitChannel := make(chan os.Signal, 1)
+		signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)
+		<-quitChannel
+		//time for cleanup before exit
+		fmt.Println("Adios!")
+		os.Exit(0)
+	}
+
+	if !headless {
+		uiEvents := ui.PollEvents()
+		for {
+			select {
+			case e := <-uiEvents:
+				handleProcessListEvents(e)
+				switch e.ID {
+				case "q", "<C-c>":
+					close(done)
+					ui.Close()
+					os.Exit(0)
+					return
+				case "<Resize>":
+					payload := e.Payload.(ui.Resize)
+					grid.SetRect(0, 0, payload.Width, payload.Height)
+					render()
+				case "r":
+					termWidth, termHeight := ui.TerminalDimensions()
+					grid.SetRect(0, 0, termWidth, termHeight)
+					ui.Clear()
+					render()
+				case "p":
+					togglePartyMode()
+				case "c":
+					termWidth, termHeight := ui.TerminalDimensions()
+					grid.SetRect(0, 0, termWidth, termHeight)
+					cycleColors()
+					ui.Clear()
+					render()
+				case "l":
+					termWidth, termHeight := ui.TerminalDimensions()
+					grid.SetRect(0, 0, termWidth, termHeight)
+					ui.Clear()
+					switchGridLayout()
+					render()
+				case "h", "?":
+					termWidth, termHeight := ui.TerminalDimensions()
+					grid.SetRect(0, 0, termWidth, termHeight)
+					ui.Clear()
+					toggleHelpMenu()
+					render()
+				case "j", "<Down>":
+					if selectedProcess < len(processList.Rows)-1 {
+						selectedProcess++
+						ui.Render(processList)
+					}
+				case "k", "<Up>":
+					if selectedProcess > 0 {
+						selectedProcess--
+						ui.Render(processList)
+					}
+				}
+			case <-done:
 				ui.Close()
 				os.Exit(0)
 				return
-			case "<Resize>":
-				payload := e.Payload.(ui.Resize)
-				grid.SetRect(0, 0, payload.Width, payload.Height)
-				ui.Render(grid)
-			case "r":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
-				ui.Clear()
-				ui.Render(grid)
-			case "p":
-				togglePartyMode()
-			case "c":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
-				cycleColors()
-				ui.Clear()
-				ui.Render(grid)
-			case "l":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
-				ui.Clear()
-				switchGridLayout()
-				ui.Render(grid)
-			case "h", "?":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
-				ui.Clear()
-				toggleHelpMenu()
-				ui.Render(grid)
-			case "j", "<Down>":
-				if selectedProcess < len(processList.Rows)-1 {
-					selectedProcess++
-					ui.Render(processList)
-				}
-			case "k", "<Up>":
-				if selectedProcess > 0 {
-					selectedProcess--
-					ui.Render(processList)
-				}
 			}
-		case <-done:
-			ui.Close()
-			os.Exit(0)
-			return
 		}
+	}
+
+}
+
+func render() {
+	if !headless {
+		ui.Render(grid)
 	}
 }
 
@@ -1360,10 +1405,14 @@ func updateTotalPowerChart(watts float64) {
 	if count > 0 {
 		avgWatts = sum / float64(count)
 	}
-	sparkline.Data = powerValues
-	sparkline.MaxVal = 8 // Match MaxHeight
-	sparklineGroup.Title = fmt.Sprintf("%.2f W Total (Max: %.2f W)", watts, maxPowerSeen)
-	sparkline.Title = fmt.Sprintf("Avg: %.2f W", avgWatts)
+
+	if !headless {
+		sparkline.Data = powerValues
+		sparkline.MaxVal = 8 // Match MaxHeight
+		sparklineGroup.Title = fmt.Sprintf("%.2f W Total (Max: %.2f W)", watts, maxPowerSeen)
+		sparkline.Title = fmt.Sprintf("Avg: %.2f W", avgWatts)
+	}
+
 }
 
 func updateCPUUI(cpuMetrics CPUMetrics) {
@@ -1372,38 +1421,48 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 		stderrLogger.Printf("Error getting CPU percentages: %v\n", err)
 		return
 	}
-	cpuCoreWidget.UpdateUsage(coreUsages)
+	if !headless {
+		cpuCoreWidget.UpdateUsage(coreUsages)
+	}
+
 	var totalUsage float64
 	for _, usage := range coreUsages {
 		totalUsage += usage
 	}
 	totalUsage /= float64(len(coreUsages))
-	cpuGauge.Percent = int(totalUsage)
-	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) - CPU Usage: %.2f%%",
-		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
-		cpuCoreWidget.eCoreCount,
-		cpuCoreWidget.pCoreCount,
-		totalUsage,
-	)
-	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%%",
-		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
-		cpuCoreWidget.eCoreCount,
-		cpuCoreWidget.pCoreCount,
-		totalUsage,
-	)
-	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
-		cpuMetrics.CPUW,
-		cpuMetrics.GPUW,
-		cpuMetrics.PackageW,
-		map[bool]string{
-			true:  "Throttled!",
-			false: "Nominal",
-		}[cpuMetrics.Throttled],
-	)
+
+	if !headless {
+		cpuGauge.Percent = int(totalUsage)
+		cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) - CPU Usage: %.2f%%",
+			cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
+			cpuCoreWidget.eCoreCount,
+			cpuCoreWidget.pCoreCount,
+			totalUsage,
+		)
+		cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%%",
+			cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
+			cpuCoreWidget.eCoreCount,
+			cpuCoreWidget.pCoreCount,
+			totalUsage,
+		)
+		PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
+		PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
+			cpuMetrics.CPUW,
+			cpuMetrics.GPUW,
+			cpuMetrics.PackageW,
+			map[bool]string{
+				true:  "Throttled!",
+				false: "Nominal",
+			}[cpuMetrics.Throttled],
+		)
+	}
+
 	memoryMetrics := getMemoryMetrics()
-	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
-	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
+
+	if !headless {
+		memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
+		memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
+	}
 
 	cpuUsage.Set(float64(totalUsage))
 	powerUsage.With(prometheus.Labels{"component": "cpu"}).Set(cpuMetrics.CPUW)
@@ -1417,8 +1476,10 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 }
 
 func updateGPUUI(gpuMetrics GPUMetrics) {
-	gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
-	gpuGauge.Percent = int(gpuMetrics.Active)
+	if !headless {
+		gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
+		gpuGauge.Percent = int(gpuMetrics.Active)
+	}
 
 	// Add GPU history tracking
 	for i := 0; i < len(gpuValues)-1; i++ {
@@ -1440,9 +1501,11 @@ func updateGPUUI(gpuMetrics GPUMetrics) {
 		avgGPU = sum / float64(count)
 	}
 
-	gpuSparkline.Data = gpuValues
-	gpuSparkline.MaxVal = 100 // GPU usage is 0-100%
-	gpuSparklineGroup.Title = fmt.Sprintf("GPU History: %d%% (Avg: %.1f%%)", gpuMetrics.Active, avgGPU)
+	if !headless {
+		gpuSparkline.Data = gpuValues
+		gpuSparkline.MaxVal = 100 // GPU usage is 0-100%
+		gpuSparklineGroup.Title = fmt.Sprintf("GPU History: %d%% (Avg: %.1f%%)", gpuMetrics.Active, avgGPU)
+	}
 
 	gpuUsage.Set(float64(gpuMetrics.Active))
 	gpuFreqMHz.Set(float64(gpuMetrics.FreqMHz))
