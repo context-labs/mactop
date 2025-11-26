@@ -41,8 +41,8 @@ import (
 )
 
 var (
-	version                                      = "v0.2.3"
-	cpuGauge, gpuGauge, memoryGauge              *w.Gauge
+	version                                      = "v0.2.4"
+	cpuGauge, gpuGauge, memoryGauge, aneGauge    *w.Gauge
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
 	processList                                  *w.List
@@ -74,6 +74,7 @@ var (
 	maxPower                                     = 0.0 // Track maximum power for better scaling
 	gpuValues                                    = make([]float64, 100)
 	prometheusPort                               string
+	ttyFile                                      *os.File
 )
 
 var (
@@ -146,7 +147,7 @@ type CPUMetrics struct {
 	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz int
 	ECores, PCores                                                   []int
 	CoreMetrics                                                      map[string]int
-	CPUW, GPUW, PackageW                                             float64
+	ANEW, CPUW, GPUW, PackageW                                       float64
 	CoreUsages                                                       []float64
 	Throttled                                                        bool
 }
@@ -465,16 +466,16 @@ func setupUI() {
 	processList.SelectedRow = 0
 
 	gauges := []*w.Gauge{
-		w.NewGauge(), w.NewGauge(), w.NewGauge(),
+		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
 	}
-	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage"}
+	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage", "ANE Usage"}
 	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
 	for i, gauge := range gauges {
 		gauge.Percent = 0
 		gauge.Title = titles[i]
 		gauge.BarColor = colors[i]
 	}
-	cpuGauge, gpuGauge, memoryGauge = gauges[0], gauges[1], gauges[2]
+	cpuGauge, gpuGauge, memoryGauge, aneGauge = gauges[0], gauges[1], gauges[2], gauges[3]
 
 	PowerChart, NetworkInfo = w.NewParagraph(), w.NewParagraph()
 	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk Info"
@@ -521,12 +522,12 @@ func setupGrid() {
 
 	grid.Set(
 		ui.NewRow(1.0/4,
-			ui.NewCol(1.0, cpuGauge),
-			// ui.NewCol(1.0/2, gpuGauge),
+			ui.NewCol(1.0/2, cpuGauge),
+			ui.NewCol(1.0/2, gpuGauge),
 		),
 		ui.NewRow(2.0/4,
 			ui.NewCol(1.0/2,
-				ui.NewRow(1.0/2, gpuGauge),
+				ui.NewRow(1.0/2, aneGauge),
 				ui.NewRow(1.0/2,
 					ui.NewCol(1.0/2, PowerChart),
 					ui.NewCol(1.0/2, sparklineGroup),
@@ -568,7 +569,8 @@ func switchGridLayout() {
 		newGrid := ui.NewGrid()
 		newGrid.Set(
 			ui.NewRow(1.0/4,
-				ui.NewCol(1.0, cpuGauge),
+				ui.NewCol(1.0/2, cpuGauge),
+				ui.NewCol(1.0/2, aneGauge),
 			),
 			ui.NewRow(2.0/4,
 				ui.NewCol(1.0/2,
@@ -646,6 +648,70 @@ func togglePartyMode() {
 
 func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
+}
+
+func readByteWithTimeout(tty *os.File, timeout time.Duration) (byte, bool) {
+	byteChan := make(chan byte, 1)
+	go func() {
+		buf := make([]byte, 1)
+		n, err := tty.Read(buf)
+		if err == nil && n == 1 {
+			byteChan <- buf[0]
+		}
+	}()
+	select {
+	case b := <-byteChan:
+		return b, true
+	case <-time.After(timeout):
+		return 0, false
+	}
+}
+
+func pollKeyboardInput(tty *os.File) <-chan string {
+	ch := make(chan string)
+	go func() {
+		buf := make([]byte, 16)
+		for {
+			n, err := tty.Read(buf)
+			if err != nil {
+				close(ch)
+				return
+			}
+			if n > 0 {
+				if n >= 3 && buf[0] == 27 && (buf[1] == 91 || buf[1] == 79) {
+					switch buf[2] {
+					case 65:
+						ch <- "<Up>"
+					case 66:
+						ch <- "<Down>"
+					case 67:
+						ch <- "<Right>"
+					case 68:
+						ch <- "<Left>"
+					default:
+						ch <- "<Escape>"
+					}
+				} else if n == 1 {
+					b := buf[0]
+					switch b {
+					case 3:
+						ch <- "<C-c>"
+					case 27:
+						ch <- "<Escape>"
+					case 13, 10:
+						ch <- "<Enter>"
+					case 32:
+						ch <- "<Space>"
+					default:
+						ch <- string(b)
+					}
+				} else if n == 2 && buf[0] == 27 {
+					ch <- "<Escape>"
+				}
+			}
+		}
+	}()
+	return ch
 }
 
 func parseTimeString(timeStr string) float64 {
@@ -858,11 +924,11 @@ func updateProcessList() {
 
 func handleProcessListEvents(e ui.Event) {
 	switch e.ID {
-	case "<Up>":
+	case "<Up>", "k":
 		if processList.SelectedRow > 0 {
 			processList.SelectedRow--
 		}
-	case "<Down>":
+	case "<Down>", "j":
 		if processList.SelectedRow < len(processList.Rows)-1 {
 			processList.SelectedRow++
 		}
@@ -890,11 +956,12 @@ func cycleColors() {
 	ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 	ui.Theme.BarChart.Bars = []ui.Color{color}
 
-	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
+	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor, aneGauge.BarColor = color, color, color, color
 	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color)
 	processList.SelectedRowStyle, modelText.TextStyle, helpText.TextStyle = ui.NewStyle(ui.ColorBlack, color), ui.NewStyle(color), ui.NewStyle(color)
 
 	cpuGauge.BorderStyle.Fg, cpuGauge.TitleStyle.Fg = color, color
+	aneGauge.BorderStyle.Fg, aneGauge.TitleStyle.Fg = color, color
 	gpuGauge.BorderStyle.Fg, gpuGauge.TitleStyle.Fg, memoryGauge.BorderStyle.Fg, memoryGauge.TitleStyle.Fg = color, color, color, color
 	processList.BorderStyle.Fg, processList.TitleStyle.Fg, NetworkInfo.BorderStyle.Fg, NetworkInfo.TitleStyle.Fg = color, color, color, color
 	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg = color, color
@@ -984,6 +1051,7 @@ func main() {
 		fmt.Println("Usage: sudo mactop")
 		os.Exit(1)
 	}
+
 	logfile, err := setupLogfile()
 	if err != nil {
 		stderrLogger.Fatalf("failed to setup log file: %v", err)
@@ -995,6 +1063,13 @@ func main() {
 	}
 	defer ui.Close()
 	StderrToLogfile(logfile)
+
+	ttyFile, err = os.Open("/dev/tty")
+	if err != nil {
+		ui.Close()
+		stderrLogger.Fatalf("failed to open /dev/tty: %v", err)
+	}
+	defer ttyFile.Close()
 
 	if prometheusPort != "" {
 		startPrometheusServer(prometheusPort)
@@ -1024,7 +1099,7 @@ func main() {
 		ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
 		ui.Theme.BarChart.Bars = []ui.Color{color}
 		setupUI()
-		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor = color, color, color
+		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor, aneGauge.BarColor = color, color, color, color
 		processList.TextStyle = ui.NewStyle(color)
 		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
 	} else {
@@ -1091,21 +1166,19 @@ func main() {
 		}
 	}()
 	lastUpdateTime = time.Now()
+	keyboardInput := pollKeyboardInput(ttyFile)
 	uiEvents := ui.PollEvents()
 	for {
 		select {
-		case e := <-uiEvents:
-			handleProcessListEvents(e)
-			switch e.ID {
+		case key := <-keyboardInput:
+			fakeEvent := ui.Event{Type: ui.KeyboardEvent, ID: key}
+			handleProcessListEvents(fakeEvent)
+			switch key {
 			case "q", "<C-c>":
 				close(done)
 				ui.Close()
 				os.Exit(0)
 				return
-			case "<Resize>":
-				payload := e.Payload.(ui.Resize)
-				grid.SetRect(0, 0, payload.Width, payload.Height)
-				ui.Render(grid)
 			case "r":
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
@@ -1131,16 +1204,12 @@ func main() {
 				ui.Clear()
 				toggleHelpMenu()
 				ui.Render(grid)
-			case "j", "<Down>":
-				if selectedProcess < len(processList.Rows)-1 {
-					selectedProcess++
-					ui.Render(processList)
-				}
-			case "k", "<Up>":
-				if selectedProcess > 0 {
-					selectedProcess--
-					ui.Render(processList)
-				}
+			}
+		case e := <-uiEvents:
+			if e.ID == "<Resize>" {
+				payload := e.Payload.(ui.Resize)
+				grid.SetRect(0, 0, payload.Width, payload.Height)
+				ui.Render(grid)
 			}
 		case <-done:
 			ui.Close()
@@ -1319,8 +1388,8 @@ func getProcessList() []ProcessMetrics {
 		if len(fields) < 11 {
 			continue
 		}
-		cpu, _ := strconv.ParseFloat(fields[2], 64)
-		mem, _ := strconv.ParseFloat(fields[3], 64)
+		cpu, _ := strconv.ParseFloat(replaceCommas(fields[2]), 64)
+		mem, _ := strconv.ParseFloat(replaceCommas(fields[3]), 64)
 		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)
 		pid, _ := strconv.Atoi(fields[1])
@@ -1333,6 +1402,10 @@ func getProcessList() []ProcessMetrics {
 		return processes[i].CPU > processes[j].CPU
 	})
 	return processes
+}
+
+func replaceCommas(s string) string {
+	return strings.Replace(s, ",", ".", -1)
 }
 
 func updateTotalPowerChart(watts float64) {
@@ -1391,10 +1464,15 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 		cpuCoreWidget.pCoreCount,
 		totalUsage,
 	)
+	aneUtil := float64(cpuMetrics.ANEW / 1 / 8.0 * 100)
+	aneGauge.Title = fmt.Sprintf("ANE Usage: %.2f%% @ %.2f W", aneUtil, cpuMetrics.ANEW)
+	aneGauge.Percent = int(aneUtil)
+
 	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
+	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nANE Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
 		cpuMetrics.CPUW,
 		cpuMetrics.GPUW,
+		cpuMetrics.ANEW,
 		cpuMetrics.PackageW,
 		map[bool]string{
 			true:  "Throttled!",
@@ -1521,6 +1599,9 @@ func parseCPUMetrics(data map[string]interface{}, cpuMetrics CPUMetrics) CPUMetr
 	}
 	if gpuEnergy, ok := processor["gpu_power"].(float64); ok {
 		cpuMetrics.GPUW = float64(gpuEnergy) / 1000
+	}
+	if aneEnergy, ok := processor["ane_power"].(float64); ok {
+		cpuMetrics.ANEW = float64(aneEnergy) / 1000
 	}
 	if combinedPower, ok := processor["combined_power"].(float64); ok {
 		cpuMetrics.PackageW = float64(combinedPower) / 1000
