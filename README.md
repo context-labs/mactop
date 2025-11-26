@@ -152,7 +152,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## Author and Contact
 
-Carsen Klock - [@carsenklock](https://twitter.com/carsenklock)
+Carsen Klock - [@carsenklock](https://x.com/carsenklock)
 
 Project Link: [https://github.com/context-labs/mactop](https://github.com/context-labs/mactop)
 
