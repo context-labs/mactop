@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	version                                      = "v0.2.3"
+	version                                      = "v0.2.4"
 	cpuGauge, gpuGauge, memoryGauge, aneGauge    *w.Gauge
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
@@ -74,6 +74,7 @@ var (
 	maxPower                                     = 0.0 // Track maximum power for better scaling
 	gpuValues                                    = make([]float64, 100)
 	prometheusPort                               string
+	ttyFile                                      *os.File
 )
 
 var (
@@ -649,6 +650,70 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
+func readByteWithTimeout(tty *os.File, timeout time.Duration) (byte, bool) {
+	byteChan := make(chan byte, 1)
+	go func() {
+		buf := make([]byte, 1)
+		n, err := tty.Read(buf)
+		if err == nil && n == 1 {
+			byteChan <- buf[0]
+		}
+	}()
+	select {
+	case b := <-byteChan:
+		return b, true
+	case <-time.After(timeout):
+		return 0, false
+	}
+}
+
+func pollKeyboardInput(tty *os.File) <-chan string {
+	ch := make(chan string)
+	go func() {
+		buf := make([]byte, 16)
+		for {
+			n, err := tty.Read(buf)
+			if err != nil {
+				close(ch)
+				return
+			}
+			if n > 0 {
+				if n >= 3 && buf[0] == 27 && (buf[1] == 91 || buf[1] == 79) {
+					switch buf[2] {
+					case 65:
+						ch <- "<Up>"
+					case 66:
+						ch <- "<Down>"
+					case 67:
+						ch <- "<Right>"
+					case 68:
+						ch <- "<Left>"
+					default:
+						ch <- "<Escape>"
+					}
+				} else if n == 1 {
+					b := buf[0]
+					switch b {
+					case 3:
+						ch <- "<C-c>"
+					case 27:
+						ch <- "<Escape>"
+					case 13, 10:
+						ch <- "<Enter>"
+					case 32:
+						ch <- "<Space>"
+					default:
+						ch <- string(b)
+					}
+				} else if n == 2 && buf[0] == 27 {
+					ch <- "<Escape>"
+				}
+			}
+		}
+	}()
+	return ch
+}
+
 func parseTimeString(timeStr string) float64 {
 	var hours, minutes int
 	var seconds float64
@@ -859,11 +924,11 @@ func updateProcessList() {
 
 func handleProcessListEvents(e ui.Event) {
 	switch e.ID {
-	case "<Up>":
+	case "<Up>", "k":
 		if processList.SelectedRow > 0 {
 			processList.SelectedRow--
 		}
-	case "<Down>":
+	case "<Down>", "j":
 		if processList.SelectedRow < len(processList.Rows)-1 {
 			processList.SelectedRow++
 		}
@@ -986,6 +1051,7 @@ func main() {
 		fmt.Println("Usage: sudo mactop")
 		os.Exit(1)
 	}
+
 	logfile, err := setupLogfile()
 	if err != nil {
 		stderrLogger.Fatalf("failed to setup log file: %v", err)
@@ -997,6 +1063,13 @@ func main() {
 	}
 	defer ui.Close()
 	StderrToLogfile(logfile)
+
+	ttyFile, err = os.Open("/dev/tty")
+	if err != nil {
+		ui.Close()
+		stderrLogger.Fatalf("failed to open /dev/tty: %v", err)
+	}
+	defer ttyFile.Close()
 
 	if prometheusPort != "" {
 		startPrometheusServer(prometheusPort)
@@ -1093,21 +1166,19 @@ func main() {
 		}
 	}()
 	lastUpdateTime = time.Now()
+	keyboardInput := pollKeyboardInput(ttyFile)
 	uiEvents := ui.PollEvents()
 	for {
 		select {
-		case e := <-uiEvents:
-			handleProcessListEvents(e)
-			switch e.ID {
+		case key := <-keyboardInput:
+			fakeEvent := ui.Event{Type: ui.KeyboardEvent, ID: key}
+			handleProcessListEvents(fakeEvent)
+			switch key {
 			case "q", "<C-c>":
 				close(done)
 				ui.Close()
 				os.Exit(0)
 				return
-			case "<Resize>":
-				payload := e.Payload.(ui.Resize)
-				grid.SetRect(0, 0, payload.Width, payload.Height)
-				ui.Render(grid)
 			case "r":
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
@@ -1133,16 +1204,12 @@ func main() {
 				ui.Clear()
 				toggleHelpMenu()
 				ui.Render(grid)
-			case "j", "<Down>":
-				if selectedProcess < len(processList.Rows)-1 {
-					selectedProcess++
-					ui.Render(processList)
-				}
-			case "k", "<Up>":
-				if selectedProcess > 0 {
-					selectedProcess--
-					ui.Render(processList)
-				}
+			}
+		case e := <-uiEvents:
+			if e.ID == "<Resize>" {
+				payload := e.Payload.(ui.Resize)
+				grid.SetRect(0, 0, payload.Width, payload.Height)
+				ui.Render(grid)
 			}
 		case <-done:
 			ui.Close()
