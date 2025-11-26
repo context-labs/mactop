@@ -14,7 +14,7 @@
 ## Features
 
 - Apple Silicon Monitor Top written in Go Lang and CGO
-- Real-time CPU and GPU power wattage usage display.
+- Real-time CPU, GPU, and ANE power wattage usage display.
 - Detailed native metrics for CPU cores (E and P cores) (Apple's Mach Kernel API)
 - Memory usage and swap information.
 - Network usage information
@@ -122,9 +122,11 @@ Use the following keys to interact with the application while its running:
 - M3
 - M3 Pro
 - M3 Max
+- M3 Ultra
 - M4
 - M4 Pro
 - M4 Max
+- M5
 
 (If you have a confirmed working M series chip that is not listed, please open an issue, so we may add it here!)
 
