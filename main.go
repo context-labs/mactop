@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,9 +34,9 @@ import (
 
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
-	"github.com/shirou/gopsutil/disk"
-	"github.com/shirou/gopsutil/mem"
-	"github.com/shirou/gopsutil/net"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/net"
 )
 
 var (
@@ -735,42 +736,36 @@ func formatTime(seconds float64) string {
 	return fmt.Sprintf("%02d:%02d.%02d", minutes, secs, centisecs)
 }
 
-func formatMemorySize(bytes int64) string {
+func formatMemorySize(kb int64) string {
 	const (
-		KB = 1024
-		MB = KB * 1024
+		MB = 1024
 		GB = MB * 1024
+		TB = GB * 1024
 	)
 	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1fG", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%dM", bytes/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%dK", bytes/KB)
+	case kb >= TB:
+		return fmt.Sprintf("%.1fT", float64(kb)/float64(TB))
+	case kb >= GB:
+		return fmt.Sprintf("%.1fG", float64(kb)/float64(GB))
+	case kb >= MB:
+		return fmt.Sprintf("%dM", kb/MB)
 	default:
-		return fmt.Sprintf("%dB", bytes)
+		return fmt.Sprintf("%dK", kb)
 	}
 }
 
-func formatResMemorySize(bytes int64) string {
+func formatResMemorySize(kb int64) string {
 	const (
-		KB = 1024
-		MB = KB * 1024
+		MB = 1024
 		GB = MB * 1024
 	)
-	if bytes < MB { // If value seems too small, assume it's in KB
-		bytes *= KB
-	}
 	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1fG", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%dM", bytes/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%dK", bytes/KB)
+	case kb >= GB:
+		return fmt.Sprintf("%.1fG", float64(kb)/float64(GB))
+	case kb >= MB:
+		return fmt.Sprintf("%dM", kb/MB)
 	default:
-		return fmt.Sprintf("%dB", bytes)
+		return fmt.Sprintf("%dK", kb)
 	}
 }
 
@@ -1365,13 +1360,14 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 }
 
 func getProcessList() []ProcessMetrics {
-	cmd := exec.Command("ps", "aux") // ps aux has the same results as htop, TODO: better method in Cgo
+	cmd := exec.Command("ps", "aux")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	output, err := cmd.Output()
 	if err != nil {
 		log.Printf("Error getting process list: %v", err)
 		return nil
 	}
+	numCPU := float64(runtime.NumCPU())
 	processes := []ProcessMetrics{}
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines[1:] {
@@ -1383,6 +1379,7 @@ func getProcessList() []ProcessMetrics {
 			continue
 		}
 		cpu, _ := strconv.ParseFloat(replaceCommas(fields[2]), 64)
+		cpu = cpu / numCPU
 		mem, _ := strconv.ParseFloat(replaceCommas(fields[3]), 64)
 		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)
@@ -1586,9 +1583,9 @@ func getVolumes() []VolumeInfo {
 
 func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Net: ↑%.0fKB/s ↓%.0fKB/s\n",
+	sb.WriteString(fmt.Sprintf("Net: ↑ %.0fKB/s ↓ %.0fKB/s\n",
 		netdiskMetrics.OutBytesPerSec, netdiskMetrics.InBytesPerSec))
-	sb.WriteString(fmt.Sprintf("I/O: R%.0fKB/s W%.0fKB/s\n",
+	sb.WriteString(fmt.Sprintf("I/O: R %.0fKB/s W %.0fKB/s\n",
 		netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteKBytesPerSec))
 
 	volumes := getVolumes()
@@ -1596,8 +1593,8 @@ func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 		if i >= 3 {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("%s: %.0f/%.0fGB (%.0f%%)\n",
-			v.Name, v.Used, v.Total, v.UsedPct))
+		sb.WriteString(fmt.Sprintf("%s: %.0f/%.0fGB (%.0fGB free)\n",
+			v.Name, v.Used, v.Total, v.Available))
 	}
 	NetworkInfo.Text = strings.TrimSuffix(sb.String(), "\n")
 }
