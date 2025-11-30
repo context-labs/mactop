@@ -1,9 +1,8 @@
-// Copyright (c) 2024-2025 Carsen Klock under MIT License
+// Copyright (c) 2024-2026 Carsen Klock under MIT License
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang! github.com/context-labs/mactop
 package main
 
 /*
-#cgo LDFLAGS: -framework CoreFoundation -framework IOKit
 #include <mach/mach_host.h>
 #include <mach/processor_info.h>
 #include <mach/mach_init.h>
@@ -12,12 +11,9 @@ extern kern_return_t vm_deallocate(vm_map_t target_task, vm_address_t address, v
 */
 import "C"
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"image"
 	"log"
-	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -36,12 +33,13 @@ import (
 
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
+	"github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/mem"
-	"howett.net/plist"
+	"github.com/shirou/gopsutil/net"
 )
 
 var (
-	version                                      = "v0.2.4"
+	version                                      = "v0.2.5"
 	cpuGauge, gpuGauge, memoryGauge, aneGauge    *w.Gauge
 	modelText, PowerChart, NetworkInfo, helpText *w.Paragraph
 	grid                                         *ui.Grid
@@ -49,7 +47,6 @@ var (
 	sparkline, gpuSparkline                      *w.Sparkline
 	sparklineGroup, gpuSparklineGroup            *w.SparklineGroup
 	cpuCoreWidget                                *CPUCoreWidget
-	selectedProcess                              int
 	powerValues                                  = make([]float64, 35)
 	lastUpdateTime                               time.Time
 	stderrLogger                                 = log.New(os.Stderr, "", 0)
@@ -62,19 +59,17 @@ var (
 	partyTicker                                  *time.Ticker
 	lastCPUTimes                                 []CPUUsage
 	firstRun                                     = true
-	processHistory                               = make(map[int]*ProcessMetrics)
-	lastProcessUpdateTime                        = time.Now()
-	currentSort                                  = "CPU" // Default sort by CPU
-	sortReverse                                  = false // Toggle for reverse sorting
+	sortReverse                                  = false
 	columns                                      = []string{"PID", "USER", "VIRT", "RES", "CPU", "MEM", "TIME", "CMD"}
-	selectedColumn                               = 4 // Default to CPU (0-based index)
-	minPower                                     = math.MaxFloat64
+	selectedColumn                               = 4
 	maxPowerSeen                                 = 0.1
-	powerHistory                                 = make([]float64, 100)
-	maxPower                                     = 0.0 // Track maximum power for better scaling
 	gpuValues                                    = make([]float64, 100)
 	prometheusPort                               string
 	ttyFile                                      *os.File
+	lastNetStats                                 net.IOCountersStat
+	lastDiskStats                                disk.IOCountersStat
+	lastNetDiskTime                              time.Time
+	netDiskMutex                                 sync.Mutex
 )
 
 var (
@@ -147,9 +142,10 @@ type CPUMetrics struct {
 	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz int
 	ECores, PCores                                                   []int
 	CoreMetrics                                                      map[string]int
-	ANEW, CPUW, GPUW, PackageW                                       float64
+	ANEW, CPUW, GPUW, DRAMW, PackageW                                float64
 	CoreUsages                                                       []float64
 	Throttled                                                        bool
+	SocTemp                                                          float64
 }
 
 type NetDiskMetrics struct {
@@ -158,6 +154,7 @@ type NetDiskMetrics struct {
 
 type GPUMetrics struct {
 	FreqMHz, Active int
+	Temp            float64
 }
 type ProcessMetrics struct {
 	PID                                      int
@@ -174,8 +171,7 @@ type MemoryMetrics struct {
 type EventThrottler struct {
 	timer       *time.Timer
 	gracePeriod time.Duration
-
-	C chan struct{}
+	C           chan struct{}
 }
 
 type CPUCoreWidget struct {
@@ -448,7 +444,7 @@ func setupUI() {
 			"Start Flags:\n"+
 			"--help, -h: Show this help menu\n"+
 			"--version, -v: Show the version of mactop\n"+
-			"--interval, -i: Set the powermetrics update interval in milliseconds. Default is 1000.\n"+
+			"--interval, -i: Set the update interval in milliseconds. Default is 1000.\n"+
 			"--prometheus, -p: Set and enable a Prometheus metrics port. Default is none. (e.g. --prometheus=9090)\n"+
 			"--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\n"+
 			"Version: %s",
@@ -1003,17 +999,27 @@ func main() {
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
-			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the powermetrics update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nYou must use sudo to run mactop, as powermetrics requires root privileges.\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
+			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nNo sudo required!\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
 			os.Exit(0)
 		case "--version", "-v":
 			fmt.Println("mactop version:", version)
 			os.Exit(0)
 		case "--test", "-t":
-			if i+1 < len(os.Args) {
-				testInput := os.Args[i+1]
-				fmt.Printf("Test input received: %s\n", testInput)
-				os.Exit(0)
+			fmt.Println("Testing IOReport power metrics (no sudo required)...")
+			initSocMetrics()
+			for i := 0; i < 3; i++ {
+				m := sampleSocMetrics(500)
+				thermalStr, _ := getThermalStateString()
+				fmt.Printf("Sample %d:\n", i+1)
+				fmt.Printf("  SoC Temp: %.1f°C\n", m.SocTemp)
+				fmt.Printf("  CPU: %.2fW | GPU: %.2fW (%d MHz, %.0f%% active)\n",
+					m.CPUPower, m.GPUPower, m.GPUFreqMHz, m.GPUActive)
+				fmt.Printf("  ANE: %.2fW | DRAM: %.2fW | Total: %.2fW | %s\n",
+					m.ANEPower, m.DRAMPower, m.TotalPower, thermalStr)
+				fmt.Println()
 			}
+			cleanupSocMetrics()
+			os.Exit(0)
 		case "--color", "-c":
 			if i+1 < len(os.Args) {
 				colorName = strings.ToLower(os.Args[i+1])
@@ -1045,11 +1051,6 @@ func main() {
 				os.Exit(1)
 			}
 		}
-	}
-	if os.Geteuid() != 0 {
-		fmt.Println("Welcome to mactop! Please try again and run mactop with sudo privileges!")
-		fmt.Println("Usage: sudo mactop")
-		os.Exit(1)
 	}
 
 	logfile, err := setupLogfile()
@@ -1220,10 +1221,16 @@ func main() {
 }
 
 func setupLogfile() (*os.File, error) {
-	if err := os.MkdirAll("/var/log", 0755); err != nil {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = os.TempDir()
+	}
+	logDir := filepath.Join(homeDir, ".mactop")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to make the log directory: %v", err)
 	}
-	logfile, err := os.OpenFile("/var/log/mactop.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
+	logPath := filepath.Join(logDir, "mactop.log")
+	logfile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %v", err)
 	}
@@ -1232,82 +1239,115 @@ func setupLogfile() (*os.File, error) {
 	return logfile, nil
 }
 
+func getThermalStateString() (string, bool) {
+	state := getSocThermalState()
+	states := []string{"Nominal", "Fair", "Serious", "Critical"}
+	if state >= 0 && state < len(states) {
+		return states[state], state > 0
+	}
+	return "Unknown", false
+}
+
+func getNetDiskMetrics() NetDiskMetrics {
+	var metrics NetDiskMetrics
+
+	netDiskMutex.Lock()
+	defer netDiskMutex.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(lastNetDiskTime).Seconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+
+	netStats, err := net.IOCounters(false)
+	if err == nil && len(netStats) > 0 {
+		current := netStats[0]
+		if lastNetDiskTime.IsZero() {
+			lastNetStats = current
+		} else {
+			metrics.InBytesPerSec = float64(current.BytesRecv-lastNetStats.BytesRecv) / elapsed / 1000
+			metrics.OutBytesPerSec = float64(current.BytesSent-lastNetStats.BytesSent) / elapsed / 1000
+			metrics.InPacketsPerSec = float64(current.PacketsRecv-lastNetStats.PacketsRecv) / elapsed
+			metrics.OutPacketsPerSec = float64(current.PacketsSent-lastNetStats.PacketsSent) / elapsed
+		}
+		lastNetStats = current
+	}
+
+	diskStats, err := disk.IOCounters()
+	if err == nil {
+		var totalReadBytes, totalWriteBytes, totalReadOps, totalWriteOps uint64
+		for _, d := range diskStats {
+			totalReadBytes += d.ReadBytes
+			totalWriteBytes += d.WriteBytes
+			totalReadOps += d.ReadCount
+			totalWriteOps += d.WriteCount
+		}
+		if !lastNetDiskTime.IsZero() {
+			metrics.ReadKBytesPerSec = float64(totalReadBytes-lastDiskStats.ReadBytes) / elapsed / 1000
+			metrics.WriteKBytesPerSec = float64(totalWriteBytes-lastDiskStats.WriteBytes) / elapsed / 1000
+			metrics.ReadOpsPerSec = float64(totalReadOps-lastDiskStats.ReadCount) / elapsed
+			metrics.WriteOpsPerSec = float64(totalWriteOps-lastDiskStats.WriteCount) / elapsed
+		}
+		lastDiskStats = disk.IOCountersStat{
+			ReadBytes:  totalReadBytes,
+			WriteBytes: totalWriteBytes,
+			ReadCount:  totalReadOps,
+			WriteCount: totalWriteOps,
+		}
+	}
+
+	lastNetDiskTime = now
+	return metrics
+}
+
 func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetricsChan chan GPUMetrics, netdiskMetricsChan chan NetDiskMetrics) {
 	cpumetricsChan <- CPUMetrics{}
 	gpumetricsChan <- GPUMetrics{}
 	netdiskMetricsChan <- NetDiskMetrics{}
-	cmd := exec.Command("sudo", "powermetrics", "--samplers", "cpu_power,gpu_power,thermal,network,disk", "--show-initial-usage", "-f", "plist", "-i", strconv.Itoa(updateInterval))
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		stderrLogger.Fatal(err)
+
+	if err := initSocMetrics(); err != nil {
+		stderrLogger.Printf("Warning: Failed to initialize IOReport, metrics may be unavailable\n")
 	}
-	if err := cmd.Start(); err != nil {
-		stderrLogger.Fatal(err)
-	}
+	defer cleanupSocMetrics()
 
-	defer func() {
-		if err := cmd.Process.Kill(); err != nil {
-			stderrLogger.Fatalf("ERROR: Failed to kill powermetrics: %v", err)
-		}
-	}()
+	getNetDiskMetrics()
 
-	// Create buffered reader with larger buffer
-	const bufferSize = 10 * 1024 * 1024 // 10MB
-	reader := bufio.NewReaderSize(stdout, bufferSize)
+	ticker := time.NewTicker(time.Duration(updateInterval) * time.Millisecond)
+	defer ticker.Stop()
 
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, bufferSize), bufferSize)
-
-	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-		if atEOF && len(data) == 0 {
-			return 0, nil, nil
-		}
-		start := bytes.Index(data, []byte("<?xml"))
-		if start == -1 {
-			start = bytes.Index(data, []byte("<plist"))
-		}
-		if start >= 0 {
-			if end := bytes.Index(data[start:], []byte("</plist>")); end >= 0 {
-				return start + end + 8, data[start : start+end+8], nil
-			}
-		}
-		if atEOF {
-			if start >= 0 {
-				return len(data), data[start:], nil
-			}
-			return len(data), nil, nil
-		}
-		return 0, nil, nil
-	})
-	retryCount := 0
-	maxRetries := 3
-	for scanner.Scan() {
+	for {
 		select {
 		case <-done:
 			return
-		default:
-			plistData := scanner.Text()
-			if !strings.Contains(plistData, "<?xml") || !strings.Contains(plistData, "</plist>") {
-				retryCount++
-				if retryCount >= maxRetries {
-					retryCount = 0
-					continue
-				}
-				continue
+		case <-ticker.C:
+			sampleDuration := updateInterval
+			if sampleDuration < 100 {
+				sampleDuration = 100
 			}
-			retryCount = 0 // Reset retry counter on successful parse
-			var data map[string]interface{}
-			err := plist.NewDecoder(strings.NewReader(plistData)).Decode(&data)
-			if err != nil {
-				stderrLogger.Printf("Error decoding plist: %v", err)
-				continue
-			}
-			cpuMetrics := parseCPUMetrics(data, NewCPUMetrics())
-			gpuMetrics := parseGPUMetrics(data)
-			netdiskMetrics := parseNetDiskMetrics(data)
 
-			// Non-blocking sends
+			m := sampleSocMetrics(sampleDuration / 2)
+
+			_, throttled := getThermalStateString()
+
+			cpuMetrics := CPUMetrics{
+				CPUW:      m.CPUPower,
+				GPUW:      m.GPUPower,
+				ANEW:      m.ANEPower,
+				DRAMW:     m.DRAMPower,
+				PackageW:  m.TotalPower,
+				Throttled: throttled,
+				SocTemp:   m.SocTemp,
+			}
+
+			gpuMetrics := GPUMetrics{
+				FreqMHz: m.GPUFreqMHz,
+				Active:  int(m.GPUActive),
+				Temp:    m.SocTemp,
+			}
+
+			netdiskMetrics := getNetDiskMetrics()
+
 			select {
 			case cpumetricsChan <- cpuMetrics:
 			default:
@@ -1322,52 +1362,6 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			}
 		}
 	}
-}
-
-func parseGPUMetrics(data map[string]interface{}) GPUMetrics {
-	var gpuMetrics GPUMetrics
-	if gpu, ok := data["gpu"].(map[string]interface{}); ok {
-		if freqHz, ok := gpu["freq_hz"].(float64); ok {
-			gpuMetrics.FreqMHz = int(freqHz)
-		}
-		if idleRatio, ok := gpu["idle_ratio"].(float64); ok {
-			gpuMetrics.Active = int((1 - idleRatio) * 100)
-		}
-	}
-	return gpuMetrics
-}
-
-func parseNetDiskMetrics(data map[string]interface{}) NetDiskMetrics {
-	var metrics NetDiskMetrics
-	if network, ok := data["network"].(map[string]interface{}); ok {
-		if rate, ok := network["ibyte_rate"].(float64); ok {
-			metrics.InBytesPerSec = rate / 1000
-		}
-		if rate, ok := network["obyte_rate"].(float64); ok {
-			metrics.OutBytesPerSec = rate / 1000
-		}
-		if rate, ok := network["ipacket_rate"].(float64); ok {
-			metrics.InPacketsPerSec = rate
-		}
-		if rate, ok := network["opacket_rate"].(float64); ok {
-			metrics.OutPacketsPerSec = rate
-		}
-	}
-	if disk, ok := data["disk"].(map[string]interface{}); ok {
-		if rate, ok := disk["rbytes_per_s"].(float64); ok {
-			metrics.ReadKBytesPerSec = rate / 1000
-		}
-		if rate, ok := disk["wbytes_per_s"].(float64); ok {
-			metrics.WriteKBytesPerSec = rate / 1000
-		}
-		if rate, ok := disk["rops_per_s"].(float64); ok {
-			metrics.ReadOpsPerSec = rate
-		}
-		if rate, ok := disk["wops_per_s"].(float64); ok {
-			metrics.WriteOpsPerSec = rate
-		}
-	}
-	return metrics
 }
 
 func getProcessList() []ProcessMetrics {
@@ -1468,16 +1462,19 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	aneGauge.Title = fmt.Sprintf("ANE Usage: %.2f%% @ %.2f W", aneUtil, cpuMetrics.ANEW)
 	aneGauge.Percent = int(aneUtil)
 
-	PowerChart.Title = fmt.Sprintf("%.2f W CPU - %.2f W GPU", cpuMetrics.CPUW, cpuMetrics.GPUW)
-	PowerChart.Text = fmt.Sprintf("CPU Power: %.2f W\nGPU Power: %.2f W\nANE Power: %.2f W\nTotal Power: %.2f W\nThermals: %s",
+	thermalStr, _ := getThermalStateString()
+	tempStr := ""
+	if cpuMetrics.SocTemp > 0 {
+		tempStr = fmt.Sprintf(" @ %.0f°C", cpuMetrics.SocTemp)
+	}
+	PowerChart.Title = fmt.Sprintf("%.1fW Total%s", cpuMetrics.PackageW, tempStr)
+	PowerChart.Text = fmt.Sprintf("CPU: %.2f W | GPU: %.2f W\nANE: %.2f W | DRAM: %.2f W\nTotal: %.2f W | %s",
 		cpuMetrics.CPUW,
 		cpuMetrics.GPUW,
 		cpuMetrics.ANEW,
+		cpuMetrics.DRAMW,
 		cpuMetrics.PackageW,
-		map[bool]string{
-			true:  "Throttled!",
-			false: "Nominal",
-		}[cpuMetrics.Throttled],
+		thermalStr,
 	)
 	memoryMetrics := getMemoryMetrics()
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
@@ -1495,7 +1492,11 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 }
 
 func updateGPUUI(gpuMetrics GPUMetrics) {
-	gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
+	if gpuMetrics.Temp > 0 {
+		gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz (%.0f°C)", int(gpuMetrics.Active), gpuMetrics.FreqMHz, gpuMetrics.Temp)
+	} else {
+		gpuGauge.Title = fmt.Sprintf("GPU Usage: %d%% @ %d MHz", int(gpuMetrics.Active), gpuMetrics.FreqMHz)
+	}
 	gpuGauge.Percent = int(gpuMetrics.Active)
 
 	// Add GPU history tracking
@@ -1573,41 +1574,6 @@ func formatGigabytes(bytes float64) string {
 func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 	total, used, available := getDiskStorage()
 	NetworkInfo.Text = fmt.Sprintf("Out: %.1f p/s, %.1f KB/s\n"+"In: %.1f p/s, %.1f KB/s\n"+"Read: %.1f ops/s, %.1f KB/s\n"+"Write: %.1f ops/s, %.1f KB/s\n"+"%s U / %s T / %s A", netdiskMetrics.OutPacketsPerSec, netdiskMetrics.OutBytesPerSec, netdiskMetrics.InPacketsPerSec, netdiskMetrics.InBytesPerSec, netdiskMetrics.ReadOpsPerSec, netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteOpsPerSec, netdiskMetrics.WriteKBytesPerSec, used, total, available)
-}
-
-func parseCPUMetrics(data map[string]interface{}, cpuMetrics CPUMetrics) CPUMetrics {
-	processor, ok := data["processor"].(map[string]interface{})
-	if !ok {
-		stderrLogger.Fatalf("Failed to get processor data\n")
-		return cpuMetrics
-	}
-
-	thermal, ok := data["thermal_pressure"].(string)
-	if !ok {
-		stderrLogger.Fatalf("Failed to get thermal data\n")
-	}
-
-	cpuMetrics.Throttled = thermal != "Nominal"
-
-	eCores := []int{}
-	pCores := []int{}
-	cpuMetrics.ECores = eCores
-	cpuMetrics.PCores = pCores
-
-	if cpuEnergy, ok := processor["cpu_power"].(float64); ok {
-		cpuMetrics.CPUW = float64(cpuEnergy) / 1000
-	}
-	if gpuEnergy, ok := processor["gpu_power"].(float64); ok {
-		cpuMetrics.GPUW = float64(gpuEnergy) / 1000
-	}
-	if aneEnergy, ok := processor["ane_power"].(float64); ok {
-		cpuMetrics.ANEW = float64(aneEnergy) / 1000
-	}
-	if combinedPower, ok := processor["combined_power"].(float64); ok {
-		cpuMetrics.PackageW = float64(combinedPower) / 1000
-	}
-
-	return cpuMetrics
 }
 
 func max(nums ...int) int {
