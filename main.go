@@ -999,13 +999,13 @@ func main() {
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
-			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nNo sudo required!\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
+			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
 			os.Exit(0)
 		case "--version", "-v":
 			fmt.Println("mactop version:", version)
 			os.Exit(0)
 		case "--test", "-t":
-			fmt.Println("Testing IOReport power metrics (no sudo required)...")
+			fmt.Println("Testing IOReport power metrics...")
 			initSocMetrics()
 			for i := 0; i < 3; i++ {
 				m := sampleSocMetrics(500)
@@ -1527,53 +1527,79 @@ func updateGPUUI(gpuMetrics GPUMetrics) {
 	gpuFreqMHz.Set(float64(gpuMetrics.FreqMHz))
 }
 
-func getDiskStorage() (total, used, available string) {
-	cmd := exec.Command("df", "-h", "/")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	output, err := cmd.Output()
+type VolumeInfo struct {
+	Name      string
+	Total     float64
+	Used      float64
+	Available float64
+	UsedPct   float64
+}
+
+func getVolumes() []VolumeInfo {
+	var volumes []VolumeInfo
+	partitions, err := disk.Partitions(false)
 	if err != nil {
-		return "N/A", "N/A", "N/A"
+		return volumes
 	}
-	lines := strings.Split(string(output), "\n")
-	if len(lines) < 2 {
-		return "N/A", "N/A", "N/A"
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 6 {
-		return "N/A", "N/A", "N/A"
-	}
-	totalBytes := parseSize(fields[1])
-	availBytes := parseSize(fields[3])
-	usedBytes := totalBytes - availBytes
-	return formatGigabytes(totalBytes), formatGigabytes(usedBytes), formatGigabytes(availBytes)
-}
 
-func parseSize(size string) float64 {
-	var value float64
-	var unit string
-	fmt.Sscanf(size, "%f%s", &value, &unit)
-	multiplier := 1.0
-	switch strings.ToLower(strings.TrimSuffix(unit, "i")) {
-	case "k", "kb":
-		multiplier = 1000
-	case "m", "mb":
-		multiplier = 1000 * 1000
-	case "g", "gb":
-		multiplier = 1000 * 1000 * 1000
-	case "t", "tb":
-		multiplier = 1000 * 1000 * 1000 * 1000
+	seen := make(map[string]bool)
+	for _, p := range partitions {
+		if seen[p.Device] {
+			continue
+		}
+		if !strings.HasPrefix(p.Mountpoint, "/Volumes/") && p.Mountpoint != "/" {
+			continue
+		}
+		if strings.Contains(p.Mountpoint, "/Volumes/Recovery") ||
+			strings.Contains(p.Mountpoint, "/Volumes/Preboot") ||
+			strings.Contains(p.Mountpoint, "/Volumes/VM") ||
+			strings.Contains(p.Mountpoint, "/Volumes/Update") ||
+			strings.Contains(p.Mountpoint, "/Volumes/xarts") ||
+			strings.Contains(p.Mountpoint, "/Volumes/iSCPreboot") ||
+			strings.Contains(p.Mountpoint, "/Volumes/Hardware") {
+			continue
+		}
+		usage, err := disk.Usage(p.Mountpoint)
+		if err != nil || usage.Total == 0 {
+			continue
+		}
+		seen[p.Device] = true
+		name := p.Mountpoint
+		if p.Mountpoint == "/" {
+			name = "Macintosh HD"
+		} else {
+			name = strings.TrimPrefix(p.Mountpoint, "/Volumes/")
+		}
+		if len(name) > 12 {
+			name = name[:12]
+		}
+		volumes = append(volumes, VolumeInfo{
+			Name:      name,
+			Total:     float64(usage.Total) / 1e9,
+			Used:      float64(usage.Used) / 1e9,
+			Available: float64(usage.Free) / 1e9,
+			UsedPct:   usage.UsedPercent,
+		})
 	}
-	return value * multiplier
-}
-
-func formatGigabytes(bytes float64) string {
-	gb := bytes / (1000 * 1000 * 1000)
-	return fmt.Sprintf("%.0fGB", gb)
+	return volumes
 }
 
 func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
-	total, used, available := getDiskStorage()
-	NetworkInfo.Text = fmt.Sprintf("Out: %.1f p/s, %.1f KB/s\n"+"In: %.1f p/s, %.1f KB/s\n"+"Read: %.1f ops/s, %.1f KB/s\n"+"Write: %.1f ops/s, %.1f KB/s\n"+"%s U / %s T / %s A", netdiskMetrics.OutPacketsPerSec, netdiskMetrics.OutBytesPerSec, netdiskMetrics.InPacketsPerSec, netdiskMetrics.InBytesPerSec, netdiskMetrics.ReadOpsPerSec, netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteOpsPerSec, netdiskMetrics.WriteKBytesPerSec, used, total, available)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Net: ↑%.0fKB/s ↓%.0fKB/s\n",
+		netdiskMetrics.OutBytesPerSec, netdiskMetrics.InBytesPerSec))
+	sb.WriteString(fmt.Sprintf("I/O: R%.0fKB/s W%.0fKB/s\n",
+		netdiskMetrics.ReadKBytesPerSec, netdiskMetrics.WriteKBytesPerSec))
+
+	volumes := getVolumes()
+	for i, v := range volumes {
+		if i >= 3 {
+			break
+		}
+		sb.WriteString(fmt.Sprintf("%s: %.0f/%.0fGB (%.0f%%)\n",
+			v.Name, v.Used, v.Total, v.UsedPct))
+	}
+	NetworkInfo.Text = strings.TrimSuffix(sb.String(), "\n")
 }
 
 func max(nums ...int) int {
