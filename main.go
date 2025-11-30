@@ -1561,7 +1561,7 @@ func getVolumes() []VolumeInfo {
 			continue
 		}
 		seen[p.Device] = true
-		name := p.Mountpoint
+		var name string
 		if p.Mountpoint == "/" {
 			name = "Macintosh HD"
 		} else {
