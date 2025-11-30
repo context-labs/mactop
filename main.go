@@ -74,11 +74,24 @@ var (
 )
 
 var (
-	// Prometheus metrics
 	cpuUsage = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "mactop_cpu_usage_percent",
-			Help: "Current Total CPU usage percentage",
+			Help: "Current total CPU usage percentage",
+		},
+	)
+
+	ecoreUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_ecore_usage_percent",
+			Help: "Current E-core CPU usage percentage",
+		},
+	)
+
+	pcoreUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_pcore_usage_percent",
+			Help: "Current P-core CPU usage percentage",
 		},
 	)
 
@@ -101,7 +114,21 @@ var (
 			Name: "mactop_power_watts",
 			Help: "Current power usage in watts",
 		},
-		[]string{"component"}, // "cpu", "gpu", "total"
+		[]string{"component"},
+	)
+
+	socTemp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_soc_temp_celsius",
+			Help: "Current SoC temperature in Celsius",
+		},
+	)
+
+	thermalState = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "mactop_thermal_state",
+			Help: "Current thermal state (0=Nominal, 1=Fair, 2=Serious, 3=Critical)",
+		},
 	)
 
 	memoryUsage = prometheus.NewGaugeVec(
@@ -109,17 +136,48 @@ var (
 			Name: "mactop_memory_gb",
 			Help: "Memory usage in GB",
 		},
-		[]string{"type"}, // "used", "total", "swap_used", "swap_total"
+		[]string{"type"},
+	)
+
+	networkSpeed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "mactop_network_kbytes_per_sec",
+			Help: "Network speed in KB/s",
+		},
+		[]string{"direction"},
+	)
+
+	diskIOSpeed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "mactop_disk_kbytes_per_sec",
+			Help: "Disk I/O speed in KB/s",
+		},
+		[]string{"operation"},
+	)
+
+	diskIOPS = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "mactop_disk_iops",
+			Help: "Disk I/O operations per second",
+		},
+		[]string{"operation"},
 	)
 )
 
 func startPrometheusServer(port string) {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(cpuUsage)
+	registry.MustRegister(ecoreUsage)
+	registry.MustRegister(pcoreUsage)
 	registry.MustRegister(gpuUsage)
 	registry.MustRegister(gpuFreqMHz)
 	registry.MustRegister(powerUsage)
+	registry.MustRegister(socTemp)
+	registry.MustRegister(thermalState)
 	registry.MustRegister(memoryUsage)
+	registry.MustRegister(networkSpeed)
+	registry.MustRegister(diskIOSpeed)
+	registry.MustRegister(diskIOPS)
 
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 
@@ -645,23 +703,6 @@ func togglePartyMode() {
 
 func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
-}
-
-func readByteWithTimeout(tty *os.File, timeout time.Duration) (byte, bool) {
-	byteChan := make(chan byte, 1)
-	go func() {
-		buf := make([]byte, 1)
-		n, err := tty.Read(buf)
-		if err == nil && n == 1 {
-			byteChan <- buf[0]
-		}
-	}()
-	select {
-	case b := <-byteChan:
-		return b, true
-	case <-time.After(timeout):
-		return 0, false
-	}
 }
 
 func pollKeyboardInput(tty *os.File) <-chan string {
@@ -1477,10 +1518,41 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	memoryGauge.Title = fmt.Sprintf("Memory Usage: %.2f GB / %.2f GB (Swap: %.2f/%.2f GB)", float64(memoryMetrics.Used)/1024/1024/1024, float64(memoryMetrics.Total)/1024/1024/1024, float64(memoryMetrics.SwapUsed)/1024/1024/1024, float64(memoryMetrics.SwapTotal)/1024/1024/1024)
 	memoryGauge.Percent = int((float64(memoryMetrics.Used) / float64(memoryMetrics.Total)) * 100)
 
-	cpuUsage.Set(float64(totalUsage))
+	var ecoreAvg, pcoreAvg float64
+	if cpuCoreWidget.eCoreCount > 0 && len(coreUsages) >= cpuCoreWidget.eCoreCount {
+		for i := 0; i < cpuCoreWidget.eCoreCount; i++ {
+			ecoreAvg += coreUsages[i]
+		}
+		ecoreAvg /= float64(cpuCoreWidget.eCoreCount)
+	}
+	if cpuCoreWidget.pCoreCount > 0 && len(coreUsages) >= cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount {
+		for i := cpuCoreWidget.eCoreCount; i < cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount; i++ {
+			pcoreAvg += coreUsages[i]
+		}
+		pcoreAvg /= float64(cpuCoreWidget.pCoreCount)
+	}
+
+	thermalStateVal, _ := getThermalStateString()
+	thermalStateNum := 0
+	switch thermalStateVal {
+	case "Fair":
+		thermalStateNum = 1
+	case "Serious":
+		thermalStateNum = 2
+	case "Critical":
+		thermalStateNum = 3
+	}
+
+	cpuUsage.Set(totalUsage)
+	ecoreUsage.Set(ecoreAvg)
+	pcoreUsage.Set(pcoreAvg)
 	powerUsage.With(prometheus.Labels{"component": "cpu"}).Set(cpuMetrics.CPUW)
-	powerUsage.With(prometheus.Labels{"component": "total"}).Set(cpuMetrics.PackageW)
 	powerUsage.With(prometheus.Labels{"component": "gpu"}).Set(cpuMetrics.GPUW)
+	powerUsage.With(prometheus.Labels{"component": "ane"}).Set(cpuMetrics.ANEW)
+	powerUsage.With(prometheus.Labels{"component": "dram"}).Set(cpuMetrics.DRAMW)
+	powerUsage.With(prometheus.Labels{"component": "total"}).Set(cpuMetrics.PackageW)
+	socTemp.Set(cpuMetrics.SocTemp)
+	thermalState.Set(float64(thermalStateNum))
 
 	memoryUsage.With(prometheus.Labels{"type": "used"}).Set(float64(memoryMetrics.Used) / 1024 / 1024 / 1024)
 	memoryUsage.With(prometheus.Labels{"type": "total"}).Set(float64(memoryMetrics.Total) / 1024 / 1024 / 1024)
@@ -1597,6 +1669,13 @@ func updateNetDiskUI(netdiskMetrics NetDiskMetrics) {
 			v.Name, v.Used, v.Total, v.Available))
 	}
 	NetworkInfo.Text = strings.TrimSuffix(sb.String(), "\n")
+
+	networkSpeed.With(prometheus.Labels{"direction": "upload"}).Set(netdiskMetrics.OutBytesPerSec)
+	networkSpeed.With(prometheus.Labels{"direction": "download"}).Set(netdiskMetrics.InBytesPerSec)
+	diskIOSpeed.With(prometheus.Labels{"operation": "read"}).Set(netdiskMetrics.ReadKBytesPerSec)
+	diskIOSpeed.With(prometheus.Labels{"operation": "write"}).Set(netdiskMetrics.WriteKBytesPerSec)
+	diskIOPS.With(prometheus.Labels{"operation": "read"}).Set(netdiskMetrics.ReadOpsPerSec)
+	diskIOPS.With(prometheus.Labels{"operation": "write"}).Set(netdiskMetrics.WriteOpsPerSec)
 }
 
 func max(nums ...int) int {
