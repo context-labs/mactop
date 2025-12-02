@@ -17,18 +17,20 @@
 - Apple Silicon Monitor Top written in Go Lang and CGO
 - Real-time CPU, GPU, ANE, and DRAM power wattage usage display
 - GPU frequency and usage percentage display
-- SoC temperature monitoring
+- SoC temperature and Thermal State monitoring (Nominal, Fair, Serious, Critical)
 - Detailed native metrics for CPU cores (E and P cores) via Apple's Mach Kernel API
 - Memory usage and swap information
 - Network usage information (upload/download speeds)
 - Disk I/O activity (read/write speeds)
 - Multiple volume display (shows Macintosh HD + mounted external volumes)
 - Easy-to-read terminal UI
-- Two layouts: default and alternative
-- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white)
+- **6 Layouts**: Default, Alternative, Vertical, Compact, Dashboard, and Gauges Only (L to cycle layouts)
+- **Persistent Settings**: Remembers your Layout and Theme choice across restarts
+- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white) (C to cycle colors)
 - Customizable update interval (default is 1000ms)
 - Process list matching htop format (VIRT in GB, CPU normalized by core count)
-- Party Mode (Randomly cycles through colors)
+- **Process Management**: Kill processes directly from the UI (F9)
+- Party Mode (Randomly cycles through colors) (P to toggle)
 - Optional Prometheus Metrics server (default is disabled)
 - Support for all Apple Silicon models
 
@@ -104,7 +106,8 @@ Use the following keys to interact with the application while its running:
 - `r`: Refresh the UI data manually.
 - `c`: Cycle through the color themes.
 - `p`: Party Mode (Randomly cycles through colors)
-- `l`: Toggle the main display's layout.
+- `l`: Cycle through the 6 available layouts.
+- `F9`: Kill the currently selected process.
 - `h`: Toggle the help menu.
 
 ## Example Theme (Green) Screenshot (mactop -c green) on Advanced layout (Hit "l" key to toggle)
