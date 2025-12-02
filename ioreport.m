@@ -84,27 +84,76 @@ static void loadGpuFrequencies() {
     io_name_t name;
     IORegistryEntryGetName(entry, name);
 
-    if (strcmp(name, "pmgr") == 0) {
+    if (strcmp(name, "pmgr") == 0 || strcmp(name, "clpc") == 0) {
       CFMutableDictionaryRef properties = NULL;
       if (IORegistryEntryCreateCFProperties(
               entry, &properties, kCFAllocatorDefault, 0) == kIOReturnSuccess) {
-        CFDataRef data = NULL;
+
         CFIndex count = CFDictionaryGetCount(properties);
         const void *keys[count];
         const void *values[count];
         CFDictionaryGetKeysAndValues(properties, keys, values);
 
+        CFDataRef bestData = NULL;
+        uint32_t bestMaxFreq = 0xFFFFFFFF; // Initialize with max possible value
+        int bestValidFreqs = 0;
+
+        // First pass: Look for specific keys known to be GPU
         for (CFIndex i = 0; i < count; i++) {
           CFStringRef key = (CFStringRef)keys[i];
-          if (cfStringStartsWith(key, "voltage-states")) {
-            data = (CFDataRef)values[i];
+          char keyName[128];
+          CFStringGetCString(key, keyName, sizeof(keyName),
+                             kCFStringEncodingUTF8);
+
+          if (strcmp(keyName, "voltage-states9-sram") == 0 ||
+              strcmp(keyName, "voltage-states9") == 0) {
+            bestData = (CFDataRef)values[i];
             break;
           }
         }
 
-        if (data != NULL) {
-          CFIndex len = CFDataGetLength(data);
-          const uint8_t *bytes = CFDataGetBytePtr(data);
+        // Second pass: If not found, use heuristic (lowest max frequency > 0)
+        if (bestData == NULL) {
+          for (CFIndex i = 0; i < count; i++) {
+            CFStringRef key = (CFStringRef)keys[i];
+            if (cfStringStartsWith(key, "voltage-states")) {
+              CFDataRef data = (CFDataRef)values[i];
+              const uint8_t *bytes = CFDataGetBytePtr(data);
+              CFIndex len = CFDataGetLength(data);
+              int totalEntries = (int)(len / 8);
+
+              int validFreqs = 0;
+              uint32_t currentMaxFreq = 0;
+
+              for (int j = 0; j < totalEntries; j++) {
+                uint32_t val;
+                memcpy(&val, bytes + (j * 8), 4);
+                // Check if value looks like a frequency in Hz (e.g. > 100 MHz)
+                if (val > 100000000) {
+                  validFreqs++;
+                  if (val > currentMaxFreq) {
+                    currentMaxFreq = val;
+                  }
+                }
+              }
+
+              // We want a table that has valid frequencies, but the LOWEST max
+              // frequency because GPU (approx 1GHz) is slower than CPU (approx
+              // 3-4GHz).
+              if (validFreqs > 0) {
+                if (currentMaxFreq < bestMaxFreq) {
+                  bestMaxFreq = currentMaxFreq;
+                  bestData = data;
+                  bestValidFreqs = validFreqs;
+                }
+              }
+            }
+          }
+        }
+
+        if (bestData != NULL) {
+          CFIndex len = CFDataGetLength(bestData);
+          const uint8_t *bytes = CFDataGetBytePtr(bestData);
           int totalFreqs = (int)(len / 8);
           if (totalFreqs > 64)
             totalFreqs = 64;
