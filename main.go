@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -51,12 +52,9 @@ var (
 	powerValues                                  = make([]float64, 35)
 	lastUpdateTime                               time.Time
 	stderrLogger                                 = log.New(os.Stderr, "", 0)
-	currentGridLayout                            = "default"
 	showHelp, partyMode                          = false, false
 	updateInterval                               = 1000
 	done                                         = make(chan struct{})
-	currentColorIndex                            = 0
-	colorOptions                                 = []ui.Color{ui.ColorWhite, ui.ColorGreen, ui.ColorBlue, ui.ColorCyan, ui.ColorMagenta, ui.ColorYellow, ui.ColorRed}
 	partyTicker                                  *time.Ticker
 	lastCPUTimes                                 []CPUUsage
 	firstRun                                     = true
@@ -71,6 +69,9 @@ var (
 	lastDiskStats                                disk.IOCountersStat
 	lastNetDiskTime                              time.Time
 	netDiskMutex                                 sync.Mutex
+	killPending                                  bool
+	killPID                                      int
+	currentUser                                  string
 )
 
 var (
@@ -485,31 +486,8 @@ func setupUI() {
 		pCoreCount,
 		gpuCoreCount,
 	)
-	prometheusStatus := "Disabled"
-	if prometheusPort != "" {
-		prometheusStatus = fmt.Sprintf("Enabled (Port: %s)", prometheusPort)
-	}
-	helpText.Text = fmt.Sprintf(
-		"mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\n"+
-			"Repo: github.com/context-labs/mactop\n\n"+
-			"Prometheus Metrics: %s\n\n"+
-			"Controls:\n"+
-			"- r: Refresh the UI data manually\n"+
-			"- c: Cycle through UI color themes\n"+
-			"- p: Toggle party mode (color cycling)\n"+
-			"- l: Toggle the main display's layout\n"+
-			"- h or ?: Toggle this help menu\n"+
-			"- q or <C-c>: Quit the application\n\n"+
-			"Start Flags:\n"+
-			"--help, -h: Show this help menu\n"+
-			"--version, -v: Show the version of mactop\n"+
-			"--interval, -i: Set the update interval in milliseconds. Default is 1000.\n"+
-			"--prometheus, -p: Set and enable a Prometheus metrics port. Default is none. (e.g. --prometheus=9090)\n"+
-			"--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\n"+
-			"Version: %s",
-		prometheusStatus,
-		version,
-	)
+	updateHelpText()
+	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
 
 	processList = w.NewList()
@@ -524,11 +502,11 @@ func setupUI() {
 		w.NewGauge(), w.NewGauge(), w.NewGauge(), w.NewGauge(),
 	}
 	titles := []string{"E-CPU Usage", "P-CPU Usage", "GPU Usage", "Memory Usage", "ANE Usage"}
-	colors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorBlue, ui.ColorCyan}
 	for i, gauge := range gauges {
 		gauge.Percent = 0
 		gauge.Title = titles[i]
-		gauge.BarColor = colors[i]
+		gauge.Percent = 0
+		gauge.Title = titles[i]
 	}
 	cpuGauge, gpuGauge, memoryGauge, aneGauge = gauges[0], gauges[1], gauges[2], gauges[3]
 
@@ -536,20 +514,18 @@ func setupUI() {
 	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk Info"
 
 	termWidth, _ := ui.TerminalDimensions()
-	numPoints := (termWidth / 2) / 2
-	numPointsGPU := (termWidth / 2)
+	numPoints := termWidth / 2
+	numPointsGPU := termWidth / 2
 	powerValues = make([]float64, numPoints)
 	gpuValues = make([]float64, numPointsGPU)
 
 	sparkline = w.NewSparkline()
-	sparkline.LineColor = ui.ColorGreen
-	sparkline.MaxHeight = 10
+	sparkline.MaxHeight = 100
 	sparkline.Data = powerValues
 
 	sparklineGroup = w.NewSparklineGroup(sparkline)
 
 	gpuSparkline = w.NewSparkline()
-	gpuSparkline.LineColor = ui.ColorGreen
 	gpuSparkline.MaxHeight = 100
 	gpuSparkline.Data = gpuValues
 	gpuSparklineGroup = w.NewSparklineGroup(gpuSparkline)
@@ -572,89 +548,42 @@ func setupUI() {
 	)
 }
 
-func setupGrid() {
-	grid = ui.NewGrid()
-
-	grid.Set(
-		ui.NewRow(1.0/4,
-			ui.NewCol(1.0/2, cpuGauge),
-			ui.NewCol(1.0/2, gpuGauge),
-		),
-		ui.NewRow(2.0/4,
-			ui.NewCol(1.0/2,
-				ui.NewRow(1.0/2, aneGauge),
-				ui.NewRow(1.0/2,
-					ui.NewCol(1.0/2, PowerChart),
-					ui.NewCol(1.0/2, sparklineGroup),
-				),
-			),
-			ui.NewCol(1.0/2,
-				ui.NewRow(1.0/2, memoryGauge),
-				ui.NewRow(1.0/2,
-					ui.NewCol(1.0/3, modelText),
-					ui.NewCol(2.0/3, NetworkInfo),
-				),
-			),
-		),
-		ui.NewRow(1.0/4,
-			ui.NewCol(1.0, processList),
-		),
+func updateHelpText() {
+	prometheusStatus := "Disabled"
+	if prometheusPort != "" {
+		prometheusStatus = fmt.Sprintf("Enabled (Port: %s)", prometheusPort)
+	}
+	helpText.Text = fmt.Sprintf(
+		"mactop is open source monitoring tool for Apple Silicon authored by Carsen Klock in Go Lang!\n\n"+
+			"Repo: github.com/context-labs/mactop\n\n"+
+			"Prometheus Metrics: %s\n\n"+
+			"Controls:\n"+
+			"- r: Refresh the UI data manually\n"+
+			"- c: Cycle through UI color themes\n"+
+			"- p: Toggle party mode (color cycling)\n"+
+			"- l: Toggle the main display's layout\n"+
+			"- F9: Kill selected process\n"+
+			"- h or ?: Toggle this help menu\n"+
+			"- q or <C-c>: Quit the application\n\n"+
+			"Start Flags:\n"+
+			"--help, -h: Show this help menu\n"+
+			"--version, -v: Show the version of mactop\n"+
+			"--interval, -i: Set the update interval in milliseconds. Default is 1000.\n"+
+			"--prometheus, -p: Set and enable a Prometheus metrics port. Default is none. (e.g. --prometheus=9090)\n"+
+			"--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\n"+
+			"Version: %s\n\n"+
+			"Current Settings:\n"+
+			"Layout: %s\n"+
+			"Theme: %s",
+		prometheusStatus,
+		version,
+		currentConfig.DefaultLayout,
+		currentConfig.Theme,
 	)
 }
 
-func switchGridLayout() {
-	if currentGridLayout == "default" {
-		newGrid := ui.NewGrid()
-		newGrid.Set(
-			ui.NewRow(1.0/2, // This row now takes half the height of the grid
-				ui.NewCol(1.0/2, cpuCoreWidget), ui.NewCol(1.0/2, ui.NewRow(1.0/2, gpuGauge), ui.NewCol(1.0, ui.NewRow(1.0, memoryGauge))), // ui.NewCol(1.0/2, ui.NewRow(1.0, ProcessInfo)), // ProcessInfo spans this entire column
-			),
-			ui.NewRow(1.0/4,
-				ui.NewCol(1.0/6, modelText), ui.NewCol(1.0/3, NetworkInfo), ui.NewCol(1.0/4, PowerChart), ui.NewCol(1.0/4, sparklineGroup),
-			),
-			ui.NewRow(1.0/4,
-				ui.NewCol(1.0, processList),
-			),
-		)
-		termWidth, termHeight := ui.TerminalDimensions()
-		newGrid.SetRect(0, 0, termWidth, termHeight)
-		grid = newGrid
-		currentGridLayout = "alternative"
-	} else {
-		newGrid := ui.NewGrid()
-		newGrid.Set(
-			ui.NewRow(1.0/4,
-				ui.NewCol(1.0/2, cpuGauge),
-				ui.NewCol(1.0/2, aneGauge),
-			),
-			ui.NewRow(2.0/4,
-				ui.NewCol(1.0/2,
-					ui.NewRow(1.0/2, gpuGauge),
-					ui.NewRow(1.0/2,
-						ui.NewCol(1.0/2, PowerChart),
-						ui.NewCol(1.0/2, sparklineGroup),
-					),
-				),
-				ui.NewCol(1.0/2,
-					ui.NewRow(1.0/2, memoryGauge),
-					ui.NewRow(1.0/2,
-						ui.NewCol(1.0/3, modelText),
-						ui.NewCol(2.0/3, NetworkInfo),
-					),
-				),
-			),
-			ui.NewRow(1.0/4,
-				ui.NewCol(1.0, processList),
-			),
-		)
-		termWidth, termHeight := ui.TerminalDimensions()
-		newGrid.SetRect(0, 0, termWidth, termHeight)
-		grid = newGrid
-		currentGridLayout = "default"
-	}
-}
-
 func toggleHelpMenu() {
+	updateHelpText()
 	showHelp = !showHelp
 	if showHelp {
 		newGrid := ui.NewGrid()
@@ -671,11 +600,7 @@ func toggleHelpMenu() {
 		newGrid.SetRect(x, y, x+helpTextGridWidth, y+helpTextGridHeight)
 		grid = newGrid
 	} else {
-		currentGridLayout = map[bool]string{
-			true:  "alternative",
-			false: "default",
-		}[currentGridLayout == "default"]
-		switchGridLayout()
+		applyLayout(currentConfig.DefaultLayout)
 	}
 	ui.Clear()
 	ui.Render(grid)
@@ -691,7 +616,7 @@ func togglePartyMode() {
 					partyTicker.Stop()
 					return
 				}
-				cycleColors()
+				cycleTheme()
 				ui.Clear()
 				ui.Render(grid)
 			}
@@ -726,6 +651,12 @@ func pollKeyboardInput(tty *os.File) <-chan string {
 						ch <- "<Right>"
 					case 68:
 						ch <- "<Left>"
+					case 50: // 2
+						if n >= 5 && buf[3] == 48 && buf[4] == 126 { // 0, ~
+							ch <- "<F9>"
+						} else {
+							ch <- "<Escape>"
+						}
 					default:
 						ch <- "<Escape>"
 					}
@@ -845,13 +776,13 @@ func updateProcessList() {
 	availableWidth := max(termWidth-2, minWidth)
 	maxWidths := map[string]int{
 		"PID":  5,  // Minimum for PID
-		"USER": 12, // Fixed maximum width for USER
+		"USER": 8,  // Fixed maximum width for USER
 		"VIRT": 6,  // For memory format
 		"RES":  6,  // For memory format
 		"CPU":  6,  // For "XX.X%"
 		"MEM":  5,  // For "X.X%"
 		"TIME": 8,  // For time format
-		"CMD":  13, // Minimum for command
+		"CMD":  15, // Minimum for command
 	}
 	usedWidth := 0
 	for col, width := range maxWidths {
@@ -938,7 +869,7 @@ func updateProcessList() {
 		resStr := formatResMemorySize(p.RSS)
 		username := truncateWithEllipsis(p.User, maxWidths["USER"])
 
-		items[i+1] = fmt.Sprintf("%*d %-*s %*s %*s %*.1f%% %*.1f%% %*s %-s",
+		line := fmt.Sprintf("%*d %-*s %*s %*s %*.1f%% %*.1f%% %*s %-s",
 			maxWidths["PID"], p.PID,
 			maxWidths["USER"], username,
 			maxWidths["VIRT"], virtStr,
@@ -948,13 +879,54 @@ func updateProcessList() {
 			maxWidths["TIME"], timeStr,
 			truncateWithEllipsis(p.Command, maxWidths["CMD"]),
 		)
+
+		if p.User != currentUser {
+			// Dim/Grey out non-user processes (using white as 'dim' relative to theme color, or just distinct)
+			// Note: termui doesn't have a 'dim' color, so we use White.
+			// If the theme is White, this won't be distinct, but for colored themes it will be.
+			items[i+1] = fmt.Sprintf("[%s](fg:white)", line)
+		} else {
+			// Use the current theme color for user processes
+			colorName := currentConfig.Theme
+			if colorName == "" {
+				colorName = "green" // Default fallback
+			}
+			items[i+1] = fmt.Sprintf("[%s](fg:%s)", line, colorName)
+		}
 	}
 
-	processList.Title = "Process List (↑/↓ scroll, ←/→ select column, Enter/Space to sort)"
+	if killPending {
+		processList.Title = fmt.Sprintf("CONFIRM KILL PID %d? (y/n)", killPID)
+		processList.TitleStyle = ui.NewStyle(ui.ColorRed, ui.ColorClear, ui.ModifierBold)
+	} else {
+		processList.Title = "Process List (↑/↓ scroll, ←/→ select column, Enter/Space to sort, F9 to kill process)"
+		// Restore default style (using current theme color if possible, or just default)
+		// We rely on cycleColors or setupUI to set the correct color, but here we can reset to default
+		// or just let the next cycleColors fix it. For now, let's try to match current theme.
+		processList.TitleStyle = ui.NewStyle(GetThemeColor(currentConfig.Theme))
+	}
 	processList.Rows = items
 }
 
 func handleProcessListEvents(e ui.Event) {
+	if killPending {
+		switch e.ID {
+		case "y", "Y":
+			if err := syscall.Kill(killPID, syscall.SIGTERM); err == nil {
+				stderrLogger.Printf("Sent SIGTERM to PID %d\n", killPID)
+			} else {
+				stderrLogger.Printf("Failed to kill PID %d: %v\n", killPID, err)
+			}
+			killPending = false
+			updateProcessList()
+		case "n", "N", "<Escape>":
+			killPending = false
+			updateProcessList()
+		}
+		ui.Render(processList, grid)
+		return
+	}
+
 	switch e.ID {
 	case "<Up>", "k":
 		if processList.SelectedRow > 0 {
@@ -977,52 +949,27 @@ func handleProcessListEvents(e ui.Event) {
 	case "<Enter>", "<Space>":
 		sortReverse = !sortReverse
 		updateProcessList()
+	case "<F9>":
+		if len(processList.Rows) > 0 && processList.SelectedRow < len(processList.Rows) {
+			// Parse PID from the selected row
+			row := processList.Rows[processList.SelectedRow]
+			fields := strings.Fields(row)
+			if len(fields) > 0 {
+				pid, err := strconv.Atoi(fields[0])
+				if err == nil {
+					killPending = true
+					killPID = pid
+					updateProcessList()
+				}
+			}
+		}
+	case "c": // Cycle colors
+		cycleTheme()
+		saveConfig()
+		updateProcessList()
+		ui.Render(grid)
 	}
 	ui.Render(processList, grid)
-}
-
-func cycleColors() {
-	currentColorIndex = (currentColorIndex + 1) % len(colorOptions)
-	color := colorOptions[currentColorIndex]
-
-	ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
-	ui.Theme.BarChart.Bars = []ui.Color{color}
-
-	cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor, aneGauge.BarColor = color, color, color, color
-	processList.TextStyle, NetworkInfo.TextStyle, PowerChart.TextStyle = ui.NewStyle(color), ui.NewStyle(color), ui.NewStyle(color)
-	processList.SelectedRowStyle, modelText.TextStyle, helpText.TextStyle = ui.NewStyle(ui.ColorBlack, color), ui.NewStyle(color), ui.NewStyle(color)
-
-	cpuGauge.BorderStyle.Fg, cpuGauge.TitleStyle.Fg = color, color
-	aneGauge.BorderStyle.Fg, aneGauge.TitleStyle.Fg = color, color
-	gpuGauge.BorderStyle.Fg, gpuGauge.TitleStyle.Fg, memoryGauge.BorderStyle.Fg, memoryGauge.TitleStyle.Fg = color, color, color, color
-	processList.BorderStyle.Fg, processList.TitleStyle.Fg, NetworkInfo.BorderStyle.Fg, NetworkInfo.TitleStyle.Fg = color, color, color, color
-	PowerChart.BorderStyle.Fg, PowerChart.TitleStyle.Fg = color, color
-	modelText.BorderStyle.Fg, modelText.TitleStyle.Fg, helpText.BorderStyle.Fg, helpText.TitleStyle.Fg = color, color, color, color
-
-	if sparkline != nil {
-		sparkline.LineColor = color
-		sparkline.TitleStyle = ui.NewStyle(color)
-	}
-	if sparklineGroup != nil {
-		sparklineGroup.BorderStyle = ui.NewStyle(color)
-		sparklineGroup.TitleStyle = ui.NewStyle(color)
-	}
-	if gpuSparkline != nil {
-		gpuSparkline.LineColor = color
-		gpuSparkline.TitleStyle = ui.NewStyle(color)
-	}
-	if gpuSparklineGroup != nil {
-		gpuSparklineGroup.BorderStyle = ui.NewStyle(color)
-		gpuSparklineGroup.TitleStyle = ui.NewStyle(color)
-	}
-
-	cpuCoreWidget.BorderStyle.Fg, cpuCoreWidget.TitleStyle.Fg = color, color
-	processList.TextStyle = ui.NewStyle(color)
-	processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
-	processList.BorderStyle.Fg = color
-	processList.TitleStyle.Fg = color
-	updateProcessList()
-	ui.Render(processList)
 }
 
 func main() {
@@ -1095,6 +1042,11 @@ func main() {
 	}
 	defer logfile.Close()
 
+	u, err := user.Current()
+	if err == nil {
+		currentUser = u.Username
+	}
+
 	if err := ui.Init(); err != nil {
 		stderrLogger.Fatalf("failed to initialize termui: %v", err)
 	}
@@ -1113,34 +1065,19 @@ func main() {
 		stderrLogger.Printf("Prometheus metrics available at http://localhost:%s/metrics\n", prometheusPort)
 	}
 	if setColor {
-		var color ui.Color
-		switch colorName {
-		case "green":
-			color = ui.ColorGreen
-		case "red":
-			color = ui.ColorRed
-		case "blue":
-			color = ui.ColorBlue
-		case "cyan":
-			color = ui.ColorCyan
-		case "magenta":
-			color = ui.ColorMagenta
-		case "yellow":
-			color = ui.ColorYellow
-		case "white":
-			color = ui.ColorWhite
-		default:
-			stderrLogger.Printf("Unsupported color: %s. Using default color.\n", colorName)
-			color = ui.ColorWhite
-		}
-		ui.Theme.Block.Title.Fg, ui.Theme.Block.Border.Fg, ui.Theme.Paragraph.Text.Fg, ui.Theme.Gauge.Label.Fg, ui.Theme.Gauge.Bar = color, color, color, color, color
-		ui.Theme.BarChart.Bars = []ui.Color{color}
+		applyTheme(colorName)
+		loadConfig()
+		// Override config theme if flag is set, but maybe we should save it?
+		// For now, let's just apply it. If they cycle, it will save.
 		setupUI()
-		cpuGauge.BarColor, gpuGauge.BarColor, memoryGauge.BarColor, aneGauge.BarColor = color, color, color, color
-		processList.TextStyle = ui.NewStyle(color)
-		processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, color)
+		applyTheme(colorName) // Apply again after setupUI to ensure widgets are colored
 	} else {
+		loadConfig()
+		if currentConfig.Theme == "" {
+			currentConfig.Theme = "green"
+		}
 		setupUI()
+		applyTheme(currentConfig.Theme)
 	}
 	if setInterval {
 		updateInterval = interval
@@ -1226,14 +1163,14 @@ func main() {
 			case "c":
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
-				cycleColors()
+				cycleTheme()
+				saveConfig()
 				ui.Clear()
 				ui.Render(grid)
 			case "l":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
+				cycleLayout()
+				saveConfig()
 				ui.Clear()
-				switchGridLayout()
 				ui.Render(grid)
 			case "h", "?":
 				termWidth, termHeight := ui.TerminalDimensions()
@@ -1468,7 +1405,8 @@ func updateTotalPowerChart(watts float64) {
 	sparkline.Data = powerValues
 	sparkline.MaxVal = 8 // Match MaxHeight
 	sparklineGroup.Title = fmt.Sprintf("%.2f W Total (Max: %.2f W)", watts, maxPowerSeen)
-	sparkline.Title = fmt.Sprintf("Avg: %.2f W", avgWatts)
+	thermalStr, _ := getThermalStateString()
+	sparkline.Title = fmt.Sprintf("Avg: %.2f W | %s", avgWatts, thermalStr)
 }
 
 func updateCPUUI(cpuMetrics CPUMetrics) {
