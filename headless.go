@@ -30,17 +30,24 @@ func runHeadless(count int) {
 	defer ticker.Stop()
 
 	type HeadlessOutput struct {
-		Timestamp  string         `json:"timestamp"`
-		SocMetrics SocMetrics     `json:"soc_metrics"`
-		Memory     MemoryMetrics  `json:"memory"`
-		NetDisk    NetDiskMetrics `json:"net_disk"`
-		CPUUsage   float64        `json:"cpu_usage"`
-		GPUUsage   float64        `json:"gpu_usage"`
+		Timestamp    string         `json:"timestamp"`
+		SocMetrics   SocMetrics     `json:"soc_metrics"`
+		Memory       MemoryMetrics  `json:"memory"`
+		NetDisk      NetDiskMetrics `json:"net_disk"`
+		CPUUsage     float64        `json:"cpu_usage"`
+		GPUUsage     float64        `json:"gpu_usage"`
+		CoreUsages   []float64      `json:"core_usages"`
+		SystemInfo   SystemInfo     `json:"system_info"`
+		ThermalState string         `json:"thermal_state"`
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
 
 	GetCPUPercentages()
+
+	if count > 0 {
+		fmt.Print("[")
+	}
 
 	samplesCollected := 0
 	for range ticker.C {
@@ -49,7 +56,8 @@ func runHeadless(count int) {
 		netDisk := getNetDiskMetrics()
 
 		var cpuUsage float64
-		if percentages, err := GetCPUPercentages(); err == nil && len(percentages) > 0 {
+		percentages, err := GetCPUPercentages()
+		if err == nil && len(percentages) > 0 {
 			var total float64
 			for _, p := range percentages {
 				total += p
@@ -57,13 +65,22 @@ func runHeadless(count int) {
 			cpuUsage = total / float64(len(percentages))
 		}
 
+		thermalStr, _ := getThermalStateString()
+
 		output := HeadlessOutput{
-			Timestamp:  time.Now().Format(time.RFC3339),
-			SocMetrics: m,
-			Memory:     mem,
-			NetDisk:    netDisk,
-			CPUUsage:   cpuUsage,
-			GPUUsage:   m.GPUActive,
+			Timestamp:    time.Now().Format(time.RFC3339),
+			SocMetrics:   m,
+			Memory:       mem,
+			NetDisk:      netDisk,
+			CPUUsage:     cpuUsage,
+			GPUUsage:     m.GPUActive,
+			CoreUsages:   percentages,
+			SystemInfo:   getSOCInfo(),
+			ThermalState: thermalStr,
+		}
+
+		if samplesCollected > 0 && count > 0 {
+			fmt.Print(",")
 		}
 
 		if err := encoder.Encode(output); err != nil {
@@ -72,6 +89,7 @@ func runHeadless(count int) {
 
 		samplesCollected++
 		if count > 0 && samplesCollected >= count {
+			fmt.Println("]")
 			return
 		}
 	}

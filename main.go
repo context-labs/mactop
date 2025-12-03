@@ -211,6 +211,14 @@ type CPUMetrics struct {
 	SocTemp                                                          float64
 }
 
+type SystemInfo struct {
+	Name         string `json:"name"`
+	CoreCount    int    `json:"core_count"`
+	ECoreCount   int    `json:"e_core_count"`
+	PCoreCount   int    `json:"p_core_count"`
+	GPUCoreCount int    `json:"gpu_core_count"`
+}
+
 type NetDiskMetrics struct {
 	OutPacketsPerSec  float64 `json:"out_packets_per_sec"`
 	OutBytesPerSec    float64 `json:"out_bytes_per_sec"`
@@ -356,10 +364,10 @@ func GetCPUUsage() ([]CPUUsage, error) {
 	return cpuUsage, nil
 }
 
-func NewCPUCoreWidget(modelInfo map[string]interface{}) *CPUCoreWidget {
-	eCoreCount, _ := modelInfo["e_core_count"].(int)
-	pCoreCount, _ := modelInfo["p_core_count"].(int)
-	modelName, _ := modelInfo["name"].(string)
+func NewCPUCoreWidget(modelInfo SystemInfo) *CPUCoreWidget {
+	eCoreCount := modelInfo.ECoreCount
+	pCoreCount := modelInfo.PCoreCount
+	modelName := modelInfo.Name
 	totalCores := eCoreCount + pCoreCount
 
 	labels := make([]string, totalCores)
@@ -480,22 +488,13 @@ func setupUI() {
 	modelText, helpText = w.NewParagraph(), w.NewParagraph()
 	modelText.Title = "Apple Silicon"
 	helpText.Title = "mactop help menu"
-	modelName, ok := appleSiliconModel["name"].(string)
-	if !ok {
+	modelName := appleSiliconModel.Name
+	if modelName == "" {
 		modelName = "Unknown Model"
 	}
-	eCoreCount, ok := appleSiliconModel["e_core_count"].(int)
-	if !ok {
-		eCoreCount = 0 // Default or error value
-	}
-	pCoreCount, ok := appleSiliconModel["p_core_count"].(int)
-	if !ok {
-		pCoreCount = 0
-	}
-	gpuCoreCount, ok := appleSiliconModel["gpu_core_count"].(string)
-	if !ok {
-		gpuCoreCount = "?"
-	}
+	eCoreCount := appleSiliconModel.ECoreCount
+	pCoreCount := appleSiliconModel.PCoreCount
+	gpuCoreCount := appleSiliconModel.GPUCoreCount
 	updateModelText()
 	updateHelpText()
 	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
@@ -545,8 +544,8 @@ func setupUI() {
 	updateProcessList()
 
 	cpuCoreWidget = NewCPUCoreWidget(appleSiliconModel)
-	eCoreCount = appleSiliconModel["e_core_count"].(int)
-	pCoreCount = appleSiliconModel["p_core_count"].(int)
+	eCoreCount = appleSiliconModel.ECoreCount
+	pCoreCount = appleSiliconModel.PCoreCount
 	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP)",
 		eCoreCount+pCoreCount,
 		eCoreCount,
@@ -561,28 +560,25 @@ func setupUI() {
 
 func updateModelText() {
 	appleSiliconModel := getSOCInfo()
-	modelName, ok := appleSiliconModel["name"].(string)
-	if !ok {
+	modelName := appleSiliconModel.Name
+	if modelName == "" {
 		modelName = "Unknown Model"
 	}
-	eCoreCount, ok := appleSiliconModel["e_core_count"].(int)
-	if !ok {
-		eCoreCount = 0
+	eCoreCount := appleSiliconModel.ECoreCount
+	pCoreCount := appleSiliconModel.PCoreCount
+	gpuCoreCount := appleSiliconModel.GPUCoreCount
+
+	gpuCoreCountStr := "?"
+	if gpuCoreCount > 0 {
+		gpuCoreCountStr = fmt.Sprintf("%d", gpuCoreCount)
 	}
-	pCoreCount, ok := appleSiliconModel["p_core_count"].(int)
-	if !ok {
-		pCoreCount = 0
-	}
-	gpuCoreCount, ok := appleSiliconModel["gpu_core_count"].(string)
-	if !ok {
-		gpuCoreCount = "?"
-	}
-	modelText.Text = fmt.Sprintf("%s\nTotal Cores: %d\nE-Cores: %d\nP-Cores: %d\nGPU Cores: %s",
+
+	modelText.Text = fmt.Sprintf("%s\n%d Cores (%d Efficiency, %d Performance)\n%s GPU Cores",
 		modelName,
 		eCoreCount+pCoreCount,
 		eCoreCount,
 		pCoreCount,
-		gpuCoreCount,
+		gpuCoreCountStr,
 	)
 }
 
@@ -1089,6 +1085,8 @@ func main() {
 	flag.StringVar(&colorName, "color", "", "Set the UI color. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.")
 	flag.BoolVar(&setColor, "set-color", false, "Internal flag to indicate if color was set via CLI") // Used to differentiate default from CLI set
 	flag.Parse()
+
+	currentUser = os.Getenv("USER")
 
 	if headless {
 		runHeadless(headlessCount)
@@ -1820,7 +1818,7 @@ func max(nums ...int) int {
 	return maxVal
 }
 
-func getSOCInfo() map[string]interface{} {
+func getSOCInfo() SystemInfo {
 	cpuInfoDict := getCPUInfo()
 	coreCountsDict := getCoreCounts()
 	var eCoreCounts, pCoreCounts int
@@ -1830,18 +1828,22 @@ func getSOCInfo() map[string]interface{} {
 	if val, ok := coreCountsDict["hw.perflevel0.logicalcpu"]; ok {
 		pCoreCounts = val
 	}
-	socInfo := map[string]interface{}{
-		"name":           cpuInfoDict["machdep.cpu.brand_string"],
-		"core_count":     cpuInfoDict["machdep.cpu.core_count"],
-		"cpu_max_power":  nil,
-		"gpu_max_power":  nil,
-		"cpu_max_bw":     nil,
-		"gpu_max_bw":     nil,
-		"e_core_count":   eCoreCounts,
-		"p_core_count":   pCoreCounts,
-		"gpu_core_count": getGPUCores(),
+
+	coreCount, _ := strconv.Atoi(cpuInfoDict["machdep.cpu.core_count"])
+	gpuCoreCountStr := getGPUCores()
+	gpuCoreCount, _ := strconv.Atoi(gpuCoreCountStr)
+	if gpuCoreCount == 0 && gpuCoreCountStr != "?" {
+		// Try to parse if it's not "?" and Atoi failed (though getGPUCores returns clean string usually)
+		// If it is "?", it stays 0
 	}
-	return socInfo
+
+	return SystemInfo{
+		Name:         cpuInfoDict["machdep.cpu.brand_string"],
+		CoreCount:    coreCount,
+		ECoreCount:   eCoreCounts,
+		PCoreCount:   pCoreCounts,
+		GPUCoreCount: gpuCoreCount,
+	}
 }
 
 func getMemoryMetrics() MemoryMetrics {
@@ -1909,7 +1911,6 @@ func getGPUCores() string {
 		stderrLogger.Fatalf("failed to execute system_profiler command: %v", err)
 	}
 	output := string(cmd)
-	stderrLogger.Printf("Output: %s\n", output)
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "Total Number of Cores") {
