@@ -1,6 +1,6 @@
 module github.com/context-labs/mactop/v2
 
-go 1.25
+go 1.25.5
 
 require (
 	github.com/gizak/termui/v3 v3.1.0

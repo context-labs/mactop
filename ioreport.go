@@ -46,6 +46,8 @@ typedef struct {
     double gpuPower;
     double anePower;
     double dramPower;
+    double gpuSramPower;
+    double systemPower;
     int gpuFreqMHz;
     double gpuActive;
     float socTemp;
@@ -59,14 +61,16 @@ int getThermalState();
 import "C"
 
 type SocMetrics struct {
-	CPUPower   float64
-	GPUPower   float64
-	ANEPower   float64
-	DRAMPower  float64
-	TotalPower float64
-	GPUFreqMHz int
-	GPUActive  float64
-	SocTemp    float64
+	CPUPower     float64 `json:"cpu_power"`
+	GPUPower     float64 `json:"gpu_power"`
+	ANEPower     float64 `json:"ane_power"`
+	DRAMPower    float64 `json:"dram_power"`
+	GPUSRAMPower float64 `json:"gpu_sram_power"`
+	SystemPower  float64 `json:"system_power"`
+	TotalPower   float64 `json:"total_power"`
+	GPUFreqMHz   int32   `json:"gpu_freq_mhz"`
+	GPUActive    float64 `json:"-"`
+	SocTemp      float32 `json:"soc_temp"`
 }
 
 func initSocMetrics() error {
@@ -79,14 +83,16 @@ func initSocMetrics() error {
 func sampleSocMetrics(durationMs int) SocMetrics {
 	pm := C.samplePowerMetrics(C.int(durationMs))
 	return SocMetrics{
-		CPUPower:   float64(pm.cpuPower),
-		GPUPower:   float64(pm.gpuPower),
-		ANEPower:   float64(pm.anePower),
-		DRAMPower:  float64(pm.dramPower),
-		TotalPower: float64(pm.cpuPower) + float64(pm.gpuPower) + float64(pm.anePower) + float64(pm.dramPower),
-		GPUFreqMHz: int(pm.gpuFreqMHz),
-		GPUActive:  float64(pm.gpuActive),
-		SocTemp:    float64(pm.socTemp),
+		CPUPower:     float64(pm.cpuPower),
+		GPUPower:     float64(pm.gpuPower),
+		ANEPower:     float64(pm.anePower),
+		DRAMPower:    float64(pm.dramPower),
+		GPUSRAMPower: float64(pm.gpuSramPower),
+		SystemPower:  float64(pm.systemPower),
+		TotalPower:   float64(pm.cpuPower) + float64(pm.gpuPower) + float64(pm.anePower) + float64(pm.dramPower) + float64(pm.gpuSramPower),
+		GPUFreqMHz:   int32(pm.gpuFreqMHz),
+		GPUActive:    float64(pm.gpuActive),
+		SocTemp:      float32(pm.socTemp),
 	}
 }
 

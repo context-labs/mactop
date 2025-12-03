@@ -30,7 +30,7 @@ func cycleLayout() {
 	nextIndex := (currentIndex + 1) % len(layoutOrder)
 	currentConfig.DefaultLayout = layoutOrder[nextIndex]
 	applyLayout(currentConfig.DefaultLayout)
-	updateHelpText() // Update help text with new layout name
+	updateHelpText()
 }
 
 func applyLayout(layoutName string) {

@@ -23,10 +23,8 @@ func applyTheme(colorName string) {
 		colorName = "green"
 	}
 
-	// Update global config
 	currentConfig.Theme = colorName
 
-	// Apply to UI components
 	ui.Theme.Block.Title.Fg = color
 	ui.Theme.Block.Border.Fg = color
 	ui.Theme.Paragraph.Text.Fg = color

@@ -1,6 +1,7 @@
 // Copyright (c) 2024-2026 Carsen Klock under MIT License
 // ioreport.m - Objective-C implementation for IOReport power/thermal metrics
 
+#include "smc.h"
 #import <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
@@ -8,6 +9,7 @@
 #include <mach/mach_init.h>
 #include <mach/processor_info.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -63,6 +65,7 @@ extern double IOHIDEventGetFloatValue(IOHIDEventRef event, int64_t field);
 
 static IOReportSubscriptionRef g_subscription = NULL;
 static CFMutableDictionaryRef g_channels = NULL;
+static io_connect_t g_smcConn = 0;
 static uint32_t g_gpu_freqs[64];
 static int g_gpu_freq_count = 0;
 
@@ -95,10 +98,9 @@ static void loadGpuFrequencies() {
         CFDictionaryGetKeysAndValues(properties, keys, values);
 
         CFDataRef bestData = NULL;
-        uint32_t bestMaxFreq = 0xFFFFFFFF; // Initialize with max possible value
+        uint32_t bestMaxFreq = 0xFFFFFFFF;
         int bestValidFreqs = 0;
 
-        // First pass: Look for specific keys known to be GPU
         for (CFIndex i = 0; i < count; i++) {
           CFStringRef key = (CFStringRef)keys[i];
           char keyName[128];
@@ -112,7 +114,6 @@ static void loadGpuFrequencies() {
           }
         }
 
-        // Second pass: If not found, use heuristic (lowest max frequency > 0)
         if (bestData == NULL) {
           for (CFIndex i = 0; i < count; i++) {
             CFStringRef key = (CFStringRef)keys[i];
@@ -128,7 +129,7 @@ static void loadGpuFrequencies() {
               for (int j = 0; j < totalEntries; j++) {
                 uint32_t val;
                 memcpy(&val, bytes + (j * 8), 4);
-                // Check if value looks like a frequency in Hz (e.g. > 100 MHz)
+
                 if (val > 100000000) {
                   validFreqs++;
                   if (val > currentMaxFreq) {
@@ -137,9 +138,6 @@ static void loadGpuFrequencies() {
                 }
               }
 
-              // We want a table that has valid frequencies, but the LOWEST max
-              // frequency because GPU (approx 1GHz) is slower than CPU (approx
-              // 3-4GHz).
               if (validFreqs > 0) {
                 if (currentMaxFreq < bestMaxFreq) {
                   bestMaxFreq = currentMaxFreq;
@@ -176,11 +174,13 @@ static void loadGpuFrequencies() {
 }
 
 int initIOReport() {
-  if (g_subscription != NULL)
+  if (g_channels != NULL) {
     return 0;
+  }
 
   CFStringRef energyGroup = CFSTR("Energy Model");
   CFStringRef gpuGroup = CFSTR("GPU Stats");
+  CFStringRef cpuGroup = CFSTR("CPU Stats");
 
   CFDictionaryRef energyChan =
       IOReportCopyChannelsInGroup(energyGroup, NULL, 0, 0, 0);
@@ -217,6 +217,8 @@ int initIOReport() {
 
   loadGpuFrequencies();
 
+  g_smcConn = SMCOpen();
+
   return 0;
 }
 
@@ -225,6 +227,8 @@ typedef struct {
   double gpuPower;
   double anePower;
   double dramPower;
+  double gpuSramPower;
+  double systemPower;
   int gpuFreqMHz;
   double gpuActive;
   float socTemp;
@@ -374,7 +378,7 @@ static float readSocTemperature() {
 }
 
 PowerMetrics samplePowerMetrics(int durationMs) {
-  PowerMetrics metrics = {0, 0, 0, 0, 0, 0, 0};
+  PowerMetrics metrics = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 
   if (g_subscription == NULL || g_channels == NULL) {
     if (initIOReport() != 0) {
@@ -384,6 +388,7 @@ PowerMetrics samplePowerMetrics(int durationMs) {
 
   CFDictionaryRef sample1 =
       IOReportCreateSamples(g_subscription, g_channels, NULL);
+
   if (sample1 == NULL)
     return metrics;
 
@@ -391,6 +396,7 @@ PowerMetrics samplePowerMetrics(int durationMs) {
 
   CFDictionaryRef sample2 =
       IOReportCreateSamples(g_subscription, g_channels, NULL);
+
   if (sample2 == NULL) {
     CFRelease(sample1);
     return metrics;
@@ -434,6 +440,8 @@ PowerMetrics samplePowerMetrics(int durationMs) {
         metrics.anePower += watts;
       } else if (cfStringStartsWith(channelRef, "DRAM")) {
         metrics.dramPower += watts;
+      } else if (cfStringStartsWith(channelRef, "GPU SRAM")) {
+        metrics.gpuSramPower += watts;
       }
     } else if (cfStringMatch(groupRef, "GPU Stats")) {
       CFStringRef subgroupRef = IOReportChannelGetSubGroup(item);
@@ -474,7 +482,13 @@ PowerMetrics samplePowerMetrics(int durationMs) {
   }
 
   metrics.socTemp = readSocTemperature();
+
+  if (g_smcConn) {
+    metrics.systemPower = SMCGetFloatValue(g_smcConn, "PSTR");
+  }
+
   CFRelease(delta);
+
   return metrics;
 }
 
@@ -484,6 +498,10 @@ void cleanupIOReport() {
     g_channels = NULL;
   }
   g_subscription = NULL;
+  if (g_smcConn) {
+    SMCClose(g_smcConn);
+    g_smcConn = 0;
+  }
 }
 
 int getThermalState() {

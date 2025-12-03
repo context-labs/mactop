@@ -107,6 +107,8 @@ Use the following keys to interact with the application while its running:
 - `c`: Cycle through the color themes.
 - `p`: Party Mode (Randomly cycles through colors)
 - `l`: Cycle through the 6 available layouts.
+- `+` or `=`: Increase update interval (slower updates).
+- `-`: Decrease update interval (faster updates).
 - `F9`: Kill the currently selected process.
 - `h`: Toggle the help menu.
 
