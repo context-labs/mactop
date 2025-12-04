@@ -253,6 +253,11 @@ func updateHelpText() {
 			"--version, -v: Show the version of mactop\n"+
 			"--interval, -i: Set the update interval in milliseconds. Default is 1000.\n"+
 			"--prometheus, -p: Set and enable a Prometheus metrics port. Default is none. (e.g. --prometheus=9090)\n"+
+			"--headless: Run in headless mode (no TUI, output JSON to stdout)\n"+
+			"--count: Number of samples to collect in headless mode (0 = infinite)\n"+
+			"--unit-network: Network unit: auto, byte, kb, mb, gb (default: auto)\n"+
+			"--unit-disk: Disk unit: auto, byte, kb, mb, gb (default: auto)\n"+
+			"--unit-temp: Temperature unit: celsius, fahrenheit (default: celsius)\n"+
 			"--color, -c: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.\n\n"+
 			"Version: %s\n\n"+
 			"Current Settings:\n"+
@@ -676,8 +681,7 @@ Options:
       --unit-network <unit> Network unit: auto, byte, kb, mb, gb (default: auto)
       --unit-disk <unit>    Disk unit: auto, byte, kb, mb, gb (default: auto)
       --unit-temp <unit>    Temperature unit: celsius, fahrenheit (default: celsius)
-      --light           Enable light mode (dark text for light backgrounds)
-      --dark            Enable dark mode (light text for dark backgrounds)
+
 
 For more information, see https://github.com/context-labs/mactop written by Carsen Klock.
 `)
@@ -1359,6 +1363,7 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	powerUsage.With(prometheus.Labels{"component": "gpu"}).Set(cpuMetrics.GPUW)
 	powerUsage.With(prometheus.Labels{"component": "ane"}).Set(cpuMetrics.ANEW)
 	powerUsage.With(prometheus.Labels{"component": "dram"}).Set(cpuMetrics.DRAMW)
+	powerUsage.With(prometheus.Labels{"component": "gpu_sram"}).Set(cpuMetrics.GPUSRAMW)
 	powerUsage.With(prometheus.Labels{"component": "total"}).Set(cpuMetrics.PackageW)
 	socTemp.Set(cpuMetrics.CPUTemp)
 	gpuTemp.Set(cpuMetrics.GPUTemp)
