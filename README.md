@@ -13,7 +13,7 @@
 
 ## Features
 
-- **No sudo required** - Uses native Apple APIs (IOReport, IOKit, IOHIDEventSystemClient)
+- **No sudo required** - Uses native Apple APIs (SMC, IOReport, IOKit, IOHIDEventSystemClient)
 - Apple Silicon Monitor Top written in Go Lang and CGO
 - Real-time CPU, GPU, ANE, DRAM, and system power wattage usage display
 - GPU frequency and usage percentage display
@@ -22,20 +22,20 @@
 - Memory usage and swap information
 - Network usage information (upload/download speeds)
 - Disk I/O activity (read/write speeds)
-- Multiple volume display (shows Macintosh HD + mounted external volumes)
+- Multiple volume display (shows Mac HD + mounted external volumes)
 - Easy-to-read terminal UI
-- **6 Layouts**: Default, Alternative, Vertical, Compact, Dashboard, and Gauges Only (L to cycle layouts)
+- **6 Layouts**: Default, Alternative, Vertical, Compact, Dashboard, and Gauges Only (`L` to cycle layouts)
 - **Persistent Settings**: Remembers your Layout and Theme choice across restarts
-- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white) (C to cycle colors)
-- Customizable update interval (default is 1000ms)
+- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white) (`C` to cycle colors)
+- Customizable update interval (default is 1000ms) (`-` or `=` to speed up, `+` to slow down)
 - Process list matching htop format (VIRT in GB, CPU normalized by core count)
 - **Process Management**: Kill processes directly from the UI (F9). List pauses while selecting.
 - **Headless Mode**: Output JSON metrics to stdout for scripting/logging (`--headless`)
 - Party Mode (Randomly cycles through colors) (P to toggle)
-- Optional Prometheus Metrics server (default is disabled)
+- Optional Prometheus Metrics server (default is disabled) (`-p <port>` or `--prometheus <port>`)
 - Support for all Apple Silicon models
 - **Auto-detect Light/Dark Mode**: Automatically adjusts UI colors based on your terminal's background color or system theme.
-- **Configurable Units**: Customize units for network, disk, and temperature display.
+- **Configurable Units**: Customize units for network, disk, and temperature display (`--unit-network`, `--unit-disk`, `--unit-temp`)
 
 ## Install via Homebrew
 
