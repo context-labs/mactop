@@ -126,6 +126,80 @@ Use the following keys to interact with the application while its running:
 
 ![mactop theme](screenshota.png)
 
+## Example Headless Output (mactop --headless --count 1)
+
+```json
+[
+   {
+      "timestamp":"2025-12-04T00:43:06-07:00",
+      "soc_metrics":{
+         "cpu_power":5.971,
+         "gpu_power":1.43491417,
+         "ane_power":0,
+         "dram_power":4.119,
+         "gpu_sram_power":0.04,
+         "system_power":45.92987823486328,
+         "total_power":11.564914169999998,
+         "gpu_freq_mhz":645,
+         "soc_temp":66.51124,
+         "cpu_temp":66.51124,
+         "gpu_temp":59.767166
+      },
+      "memory":{
+         "total":137438953472,
+         "used":95795822592,
+         "available":41643130880,
+         "swap_total":21474836480,
+         "swap_used":20288831488
+      },
+      "net_disk":{
+         "out_packets_per_sec":333.8985188256889,
+         "out_bytes_per_sec":164.55632002792703,
+         "in_packets_per_sec":295.37176665349403,
+         "in_bytes_per_sec":39.33046303000927,
+         "read_ops_per_sec":2.6754689008468664,
+         "write_ops_per_sec":275.5732967872272,
+         "read_kbytes_per_sec":43.83488247147506,
+         "write_kbytes_per_sec":3763.2246601761335
+      },
+      "cpu_usage":24.052424536171074,
+      "gpu_usage":13.709099344350134,
+      "core_usages":[
+         55.73770491803278,
+         48.08743169398907,
+         64.32432432432432,
+         53.51351351351351,
+         39.45945945945946,
+         32.432432432432435,
+         31.182795698924732,
+         18.71657754010695,
+         12.365591397849462,
+         10.21505376344086,
+         60,
+         40.54054054054054,
+         5.347593582887701,
+         2.6737967914438503,
+         2.1505376344086025,
+         1.0810810810810811,
+         1.06951871657754,
+         1.0752688172043012,
+         1.0752688172043012,
+         0
+      ],
+      "system_info":{
+         "name":"Apple M1 Ultra",
+         "core_count":20,
+         "e_core_count":4,
+         "p_core_count":16,
+         "gpu_core_count":64
+      },
+      "thermal_state":"Moderate",
+      "cpu_temp":66.51124,
+      "gpu_temp":59.767166
+   }
+]
+```
+
 ## Confirmed tested working M series chips
 
 - M1
