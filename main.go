@@ -988,16 +988,13 @@ func handleProcessListEvents(e ui.Event) {
 		sortReverse = !sortReverse
 		updateProcessList()
 	case "<F9>":
-		if len(processList.Rows) > 0 && processList.SelectedRow < len(processList.Rows) {
-			row := processList.Rows[processList.SelectedRow]
-			fields := strings.Fields(row)
-			if len(fields) > 0 {
-				pid, err := strconv.Atoi(fields[0])
-				if err == nil {
-					killPending = true
-					killPID = pid
-					updateProcessList()
-				}
+		if len(processList.Rows) > 0 && processList.SelectedRow > 0 {
+			processIndex := processList.SelectedRow - 1
+			if processIndex < len(lastProcesses) {
+				pid := lastProcesses[processIndex].PID
+				killPending = true
+				killPID = pid
+				updateProcessList()
 			}
 		}
 	case "c": // Cycle colors
@@ -1216,8 +1213,10 @@ func main() {
 				}
 				select {
 				case processes := <-processMetricsChan:
-					lastProcesses = processes
-					updateProcessList()
+					if processList.SelectedRow == 0 {
+						lastProcesses = processes
+						updateProcessList()
+					}
 					renderUI()
 				default:
 				}
