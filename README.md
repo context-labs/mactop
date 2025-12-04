@@ -34,6 +34,8 @@
 - Party Mode (Randomly cycles through colors) (P to toggle)
 - Optional Prometheus Metrics server (default is disabled)
 - Support for all Apple Silicon models
+- **Auto-detect Light/Dark Mode**: Automatically adjusts UI colors based on your terminal's background color or system theme.
+- **Configurable Units**: Customize units for network, disk, and temperature display.
 
 ## Install via Homebrew
 
@@ -99,6 +101,9 @@ mactop --interval 1000 --color green
 - `--color` or `-c`: Set the UI color. Default is white. 
 Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)
 - `--prometheus` or `-p`: Set and enable the local Prometheus metrics server on the given port. Default is disabled. (e.g. -p 2112 to enable Prometheus metrics on port 2112)
+- `--unit-network`: Network unit: auto, byte, kb, mb, gb (default: auto)
+- `--unit-disk`: Disk unit: auto, byte, kb, mb, gb (default: auto)
+- `--unit-temp`: Temperature unit: celsius, fahrenheit (default: celsius)
 - `--test` or `-t`: Test IOReport power metrics (no sudo required)
 - `--version` or `-v`: Print the version of mactop.
 - `--help` or `-h`: Show a help message about these flags and how to run mactop.
@@ -154,9 +159,10 @@ Contributions are what make the open-source community such an amazing place to l
 
 ## What does mactop use to get real-time data?
 
+- **Apple SMC**: For SoC temperature sensors and System Power (PSTR)
 - **IOReport API**: For CPU, GPU, ANE, and DRAM power consumption (no sudo required)
 - **IOKit**: For GPU frequency table from `pmgr` device
-- **IOHIDEventSystemClient**: For SoC temperature sensors (PMU tdie, pACC, eACC, GPU sensors)
+- **IOHIDEventSystemClient**: Fallback for SoC temperature sensors
 - **NSProcessInfo.thermalState**: For system thermal state (Nominal/Fair/Serious/Critical)
 - **Mach Kernel API** (`host_processor_info`): For CPU metrics (E and P cores) via CGO
 - **gopsutil**: For memory, swap, network, and disk I/O metrics
