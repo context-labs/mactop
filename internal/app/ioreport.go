@@ -1,6 +1,6 @@
 // Copyright (c) 2024-2026 Carsen Klock under MIT License
 // ioreport.go - Go wrappers for IOReport power/thermal metrics
-package main
+package app
 
 /*
 #cgo CFLAGS: -x objective-c

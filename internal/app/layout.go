@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	ui "github.com/gizak/termui/v3"
@@ -117,13 +117,10 @@ func applyLayout(layoutName string) {
 				ui.NewCol(1.0/2, memoryGauge),
 			),
 			ui.NewRow(1.0/3,
-				// ui.NewCol(1.0/4, cpuGauge),
 				ui.NewCol(1.0/2, gpuGauge),
-				// ui.NewCol(1.0/3, memoryGauge),
 				ui.NewCol(1.0/2, aneGauge),
 			),
 			ui.NewRow(1.0/3,
-				// ui.NewCol(1.0/2, PowerChart),
 				ui.NewCol(1.0/2, gpuSparklineGroup),
 				ui.NewCol(1.0/2, sparklineGroup),
 			),

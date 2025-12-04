@@ -15,9 +15,9 @@
 
 - **No sudo required** - Uses native Apple APIs (IOReport, IOKit, IOHIDEventSystemClient)
 - Apple Silicon Monitor Top written in Go Lang and CGO
-- Real-time CPU, GPU, ANE, and DRAM power wattage usage display
+- Real-time CPU, GPU, ANE, DRAM, and system power wattage usage display
 - GPU frequency and usage percentage display
-- **Temperature Monitoring**: Separate CPU and GPU temperatures + Thermal State
+- CPU and GPU temperatures + Thermal State
 - Detailed native metrics for CPU cores (E and P cores) via Apple's Mach Kernel API
 - Memory usage and swap information
 - Network usage information (upload/download speeds)
