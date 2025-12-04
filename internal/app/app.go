@@ -1036,8 +1036,8 @@ func getNetDiskMetrics() NetDiskMetrics {
 		if lastNetDiskTime.IsZero() {
 			lastNetStats = current
 		} else {
-			metrics.InBytesPerSec = float64(current.BytesRecv-lastNetStats.BytesRecv) / elapsed / 1000
-			metrics.OutBytesPerSec = float64(current.BytesSent-lastNetStats.BytesSent) / elapsed / 1000
+			metrics.InBytesPerSec = float64(current.BytesRecv-lastNetStats.BytesRecv) / elapsed
+			metrics.OutBytesPerSec = float64(current.BytesSent-lastNetStats.BytesSent) / elapsed
 			metrics.InPacketsPerSec = float64(current.PacketsRecv-lastNetStats.PacketsRecv) / elapsed
 			metrics.OutPacketsPerSec = float64(current.PacketsSent-lastNetStats.PacketsSent) / elapsed
 		}
@@ -1054,8 +1054,8 @@ func getNetDiskMetrics() NetDiskMetrics {
 			totalWriteOps += d.WriteCount
 		}
 		if !lastNetDiskTime.IsZero() {
-			metrics.ReadKBytesPerSec = float64(totalReadBytes-lastDiskStats.ReadBytes) / elapsed / 1000
-			metrics.WriteKBytesPerSec = float64(totalWriteBytes-lastDiskStats.WriteBytes) / elapsed / 1000
+			metrics.ReadKBytesPerSec = float64(totalReadBytes-lastDiskStats.ReadBytes) / elapsed / 1024
+			metrics.WriteKBytesPerSec = float64(totalWriteBytes-lastDiskStats.WriteBytes) / elapsed / 1024
 			metrics.ReadOpsPerSec = float64(totalReadOps-lastDiskStats.ReadCount) / elapsed
 			metrics.WriteOpsPerSec = float64(totalWriteOps-lastDiskStats.WriteCount) / elapsed
 		}
