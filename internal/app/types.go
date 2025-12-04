@@ -198,7 +198,7 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 
 		usedWidth := int((usage / 100.0) * float64(availWidth-7))
 
-		buf.SetString("[", ui.NewStyle(ui.ColorWhite),
+		buf.SetString("[", ui.NewStyle(BracketColor),
 			image.Pt(x+labelWidth, y))
 
 		for bx := 0; bx < availWidth-7; bx++ {
@@ -223,10 +223,10 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 				image.Pt(x+labelWidth+1+bx, y))
 		}
 		percentage := fmt.Sprintf("%5.1f%%", usage)
-		buf.SetString(percentage, ui.NewStyle(245),
+		buf.SetString(percentage, ui.NewStyle(SecondaryTextColor),
 			image.Pt(x+labelWidth+availWidth-7, y))
 
-		buf.SetString("]", ui.NewStyle(ui.ColorWhite),
+		buf.SetString("]", ui.NewStyle(BracketColor),
 			image.Pt(x+labelWidth+availWidth-1, y))
 	}
 }

@@ -571,13 +571,11 @@ func updateProcessList() {
 		)
 
 		if p.User != currentUser {
-			items[i+1] = fmt.Sprintf("[%s](fg:white)", line)
+			color := GetProcessTextColor(false)
+			items[i+1] = fmt.Sprintf("[%s](fg:%s)", line, color)
 		} else {
-			colorName := currentConfig.Theme
-			if colorName == "" {
-				colorName = "green"
-			}
-			items[i+1] = fmt.Sprintf("[%s](fg:%s)", line, colorName)
+			color := GetProcessTextColor(true)
+			items[i+1] = fmt.Sprintf("[%s](fg:%s)", line, color)
 		}
 	}
 
@@ -586,7 +584,7 @@ func updateProcessList() {
 		processList.TitleStyle = ui.NewStyle(ui.ColorRed, ui.ColorClear, ui.ModifierBold)
 	} else {
 		processList.Title = "Process List (↑/↓ scroll, ←/→ select column, Enter/Space to sort, F9 to kill process)"
-		processList.TitleStyle = ui.NewStyle(GetThemeColor(currentConfig.Theme))
+		processList.TitleStyle = ui.NewStyle(GetThemeColorWithLightMode(currentConfig.Theme, IsLightMode))
 	}
 	processList.Rows = items
 }
@@ -665,7 +663,24 @@ func Run() {
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--help", "-h":
-			fmt.Print("Usage: mactop [--help] [--version] [--interval] [--color]\n--help: Show this help message\n--version: Show the version of mactop\n--interval: Set the update interval in milliseconds. Default is 1000.\n--color: Set the UI color. Default is none. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)\n\nFor more information, see https://github.com/context-labs/mactop written by Carsen Klock.\n")
+			fmt.Print(`Usage: mactop [options]
+
+Options:
+  -h, --help            Show this help message
+  -v, --version         Show the version of mactop
+  -i, --interval <ms>   Set the update interval in milliseconds (default: 1000)
+  -c, --color <color>   Set the UI color (green, red, blue, cyan, magenta, yellow, white)
+  -p, --prometheus <port> Run Prometheus metrics server on specified port (e.g. :9090)
+      --headless        Run in headless mode (no TUI, output JSON to stdout)
+      --count <n>       Number of samples to collect in headless mode (0 = infinite)
+      --unit-network <unit> Network unit: auto, byte, kb, mb, gb (default: auto)
+      --unit-disk <unit>    Disk unit: auto, byte, kb, mb, gb (default: auto)
+      --unit-temp <unit>    Temperature unit: celsius, fahrenheit (default: celsius)
+      --light           Enable light mode (dark text for light backgrounds)
+      --dark            Enable dark mode (light text for dark backgrounds)
+
+For more information, see https://github.com/context-labs/mactop written by Carsen Klock.
+`)
 			os.Exit(0)
 		case "--version", "-v":
 			fmt.Println("mactop version:", version)
@@ -734,6 +749,13 @@ func Run() {
 	flag.StringVar(&networkUnit, "unit-network", "auto", "Network unit: auto, byte, kb, mb, gb")
 	flag.StringVar(&diskUnit, "unit-disk", "auto", "Disk unit: auto, byte, kb, mb, gb")
 	flag.StringVar(&tempUnit, "unit-temp", "celsius", "Temperature unit: celsius, fahrenheit")
+	var lightModeFlag bool
+	flag.BoolVar(&lightModeFlag, "light", false, "Enable light mode (dark text for light backgrounds)")
+	var darkModeFlag bool
+	flag.BoolVar(&darkModeFlag, "dark", false, "Enable dark mode (light text for dark backgrounds)")
+
+	loadConfig()
+
 	flag.Parse()
 
 	currentUser = os.Getenv("USER")
@@ -743,11 +765,16 @@ func Run() {
 		return
 	}
 
+	IsLightMode = detectLightMode()
+
 	// TUI Mode
 	if err := ui.Init(); err != nil {
 		stderrLogger.Fatalf("failed to initialize termui: %v", err)
 	}
 	defer ui.Close()
+
+	// Override with CLI flags if provided (we need to add a flag for this)
+	// For now, let's just use the config/auto-detect.
 
 	if err := initSocMetrics(); err != nil {
 		stderrLogger.Fatalf("failed to initialize metrics: %v", err)
@@ -767,18 +794,14 @@ func Run() {
 		startPrometheusServer(prometheusPort)
 		stderrLogger.Printf("Prometheus metrics available at http://localhost:%s/metrics\n", prometheusPort)
 	}
+	setupUI()
 	if setColor {
-		applyTheme(colorName)
-		loadConfig()
-		setupUI()
-		applyTheme(colorName)
+		applyTheme(colorName, IsLightMode)
 	} else {
-		loadConfig()
 		if currentConfig.Theme == "" {
 			currentConfig.Theme = "green"
 		}
-		setupUI()
-		applyTheme(currentConfig.Theme)
+		applyTheme(currentConfig.Theme, IsLightMode)
 	}
 	if setInterval {
 		updateInterval = interval

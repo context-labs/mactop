@@ -6,6 +6,7 @@ require (
 	github.com/gizak/termui/v3 v3.1.0
 	github.com/prometheus/client_golang v1.20.5
 	github.com/shirou/gopsutil/v4 v4.25.10
+	golang.org/x/term v0.37.0
 )
 
 require (
