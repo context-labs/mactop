@@ -96,3 +96,67 @@ double SMCGetFloatValue(io_connect_t conn, const char *key) {
 
   return 0.0;
 }
+
+int SMCGetKeyCount(io_connect_t conn) {
+  SMCKeyData_t val;
+  kern_return_t result = SMCReadKey(conn, "#KEY", &val);
+  if (result != kIOReturnSuccess) {
+    printf("SMCGetKeyCount: SMCReadKey failed with result %d\n", result);
+    return 0;
+  }
+
+  unsigned int count = 0;
+  count = ((unsigned char)val.bytes[0] << 24) |
+          ((unsigned char)val.bytes[1] << 16) |
+          ((unsigned char)val.bytes[2] << 8) | (unsigned char)val.bytes[3];
+  // printf("SMCGetKeyCount: Found %d keys\n", count);
+  return count;
+}
+
+kern_return_t SMCGetKeyFromIndex(io_connect_t conn, int index,
+                                 char *outputKey) {
+  kern_return_t result;
+  SMCKeyData_t inputStructure;
+  SMCKeyData_t outputStructure;
+
+  memset(&inputStructure, 0, sizeof(SMCKeyData_t));
+  memset(&outputStructure, 0, sizeof(SMCKeyData_t));
+
+  inputStructure.data8 = SMC_CMD_READ_INDEX;
+  inputStructure.data32 = index;
+
+  result = SMCCall(conn, KERNEL_INDEX_SMC, &inputStructure, &outputStructure);
+  if (result != kIOReturnSuccess) {
+    return result;
+  }
+
+  unsigned int key = outputStructure.key;
+  outputKey[0] = (key >> 24) & 0xFF;
+  outputKey[1] = (key >> 16) & 0xFF;
+  outputKey[2] = (key >> 8) & 0xFF;
+  outputKey[3] = key & 0xFF;
+  outputKey[4] = '\0';
+
+  return kIOReturnSuccess;
+}
+
+kern_return_t SMCGetKeyInfo(io_connect_t conn, const char *key,
+                            SMCKeyData_keyInfo_t *keyInfo) {
+  kern_return_t result;
+  SMCKeyData_t inputStructure;
+  SMCKeyData_t outputStructure;
+
+  memset(&inputStructure, 0, sizeof(SMCKeyData_t));
+  memset(&outputStructure, 0, sizeof(SMCKeyData_t));
+
+  inputStructure.key = (key[0] << 24) | (key[1] << 16) | (key[2] << 8) | key[3];
+  inputStructure.data8 = SMC_CMD_READ_KEYINFO;
+
+  result = SMCCall(conn, KERNEL_INDEX_SMC, &inputStructure, &outputStructure);
+  if (result != kIOReturnSuccess) {
+    return result;
+  }
+
+  *keyInfo = outputStructure.keyInfo;
+  return kIOReturnSuccess;
+}

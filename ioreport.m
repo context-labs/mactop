@@ -70,6 +70,7 @@ static uint32_t g_gpu_freqs[64];
 static int g_gpu_freq_count = 0;
 
 static int cfStringStartsWith(CFStringRef str, const char *prefix);
+static void loadSMCTempKeys();
 
 static void loadGpuFrequencies() {
   if (g_gpu_freq_count > 0)
@@ -218,6 +219,7 @@ int initIOReport() {
   loadGpuFrequencies();
 
   g_smcConn = SMCOpen();
+  loadSMCTempKeys();
 
   return 0;
 }
@@ -232,6 +234,8 @@ typedef struct {
   int gpuFreqMHz;
   double gpuActive;
   float socTemp;
+  float cpuTemp;
+  float gpuTemp;
 } PowerMetrics;
 
 static int cfStringMatch(CFStringRef str, const char *match) {
@@ -298,87 +302,164 @@ static double energyToWatts(int64_t energy, CFStringRef unitRef,
   return rate / 1e6;
 }
 
-static float readSocTemperature() {
-  const void *keys[2] = {CFSTR("PrimaryUsagePage"), CFSTR("PrimaryUsage")};
-  int page = kHIDPage_AppleVendor;
-  int usage = kHIDUsage_AppleVendor_TemperatureSensor;
-  CFNumberRef pageNum =
-      CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &page);
-  CFNumberRef usageNum =
-      CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &usage);
-  const void *values[2] = {pageNum, usageNum};
+static char g_cpu_keys[64][5];
+static int g_cpu_key_count = 0;
+static char g_gpu_keys[64][5];
+static int g_gpu_key_count = 0;
 
-  CFDictionaryRef matching = CFDictionaryCreate(
-      kCFAllocatorDefault, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks);
-  CFRelease(pageNum);
-  CFRelease(usageNum);
+static void loadSMCTempKeys() {
+  if (g_cpu_key_count > 0 || g_gpu_key_count > 0)
+    return;
 
-  IOHIDEventSystemClientRef client =
-      IOHIDEventSystemClientCreate(kCFAllocatorDefault);
-  if (client == NULL) {
-    CFRelease(matching);
-    return 0;
-  }
+  if (!g_smcConn)
+    return;
 
-  IOHIDEventSystemClientSetMatching(client, matching);
-  CFRelease(matching);
-
-  CFArrayRef services = IOHIDEventSystemClientCopyServices(client);
-  if (services == NULL) {
-    CFRelease(client);
-    return 0;
-  }
-
-  float tempSum = 0;
-  int tempCount = 0;
-
-  CFIndex count = CFArrayGetCount(services);
-  for (CFIndex i = 0; i < count; i++) {
-    IOHIDServiceClientRef service =
-        (IOHIDServiceClientRef)CFArrayGetValueAtIndex(services, i);
-    if (service == NULL)
-      continue;
-
-    CFStringRef productRef =
-        IOHIDServiceClientCopyProperty(service, CFSTR("Product"));
-    if (productRef == NULL)
-      continue;
-
-    char product[128] = {0};
-    CFStringGetCString(productRef, product, sizeof(product),
-                       kCFStringEncodingUTF8);
-
-    IOHIDEventRef event =
-        IOHIDServiceClientCopyEvent(service, kIOHIDEventTypeTemperature, 0, 0);
-    if (event == NULL) {
-      CFRelease(productRef);
+  int totalKeys = SMCGetKeyCount(g_smcConn);
+  for (int i = 0; i < totalKeys; i++) {
+    char key[5];
+    if (SMCGetKeyFromIndex(g_smcConn, i, key) != kIOReturnSuccess) {
+      // printf("Failed to get key at index %d\n", i);
       continue;
     }
 
-    double temp =
-        IOHIDEventGetFloatValue(event, kIOHIDEventTypeTemperature << 16);
-    CFRelease(event);
-    CFRelease(productRef);
+    SMCKeyData_keyInfo_t keyInfo;
+    if (SMCGetKeyInfo(g_smcConn, key, &keyInfo) != kIOReturnSuccess)
+      continue;
 
-    if (temp > 0 && temp < 150) {
-      if (strstr(product, "PMU tdie") != NULL ||
-          strstr(product, "pACC") != NULL || strstr(product, "eACC") != NULL ||
-          strstr(product, "GPU") != NULL) {
-        tempSum += temp;
-        tempCount++;
+    // Filter for 'flt ' type (1718383648)
+    if (keyInfo.dataType != 1718383648)
+      continue;
+
+    // CPU Keys: Tp* or Te*
+    if ((key[0] == 'T' && (key[1] == 'p' || key[1] == 'e'))) {
+      if (g_cpu_key_count < 64) {
+        strcpy(g_cpu_keys[g_cpu_key_count++], key);
+      }
+    }
+    // GPU Keys: Tg*
+    else if (key[0] == 'T' && key[1] == 'g') {
+      if (g_gpu_key_count < 64) {
+        strcpy(g_gpu_keys[g_gpu_key_count++], key);
+      }
+    }
+  }
+  // printf("Total CPU Keys: %d, Total GPU Keys: %d\n", g_cpu_key_count,
+  //        g_gpu_key_count);
+}
+
+static float readSocTemperature(float *outCpuTemp, float *outGpuTemp) {
+  float cpuSum = 0;
+  int cpuCount = 0;
+  float gpuSum = 0;
+  int gpuCount = 0;
+
+  // Try SMC First
+  if (g_smcConn) {
+    for (int i = 0; i < g_cpu_key_count; i++) {
+      float val = (float)SMCGetFloatValue(g_smcConn, g_cpu_keys[i]);
+      if (val > 0) {
+        cpuSum += val;
+        cpuCount++;
+      }
+    }
+    for (int i = 0; i < g_gpu_key_count; i++) {
+      float val = (float)SMCGetFloatValue(g_smcConn, g_gpu_keys[i]);
+      if (val > 0) {
+        gpuSum += val;
+        gpuCount++;
       }
     }
   }
 
-  CFRelease(services);
-  CFRelease(client);
+  // Fallback to HID if SMC failed
+  if (cpuCount == 0 || gpuCount == 0) {
+    // ... (HID logic) ...
+    const void *keys[2] = {CFSTR("PrimaryUsagePage"), CFSTR("PrimaryUsage")};
+    int page = kHIDPage_AppleVendor;
+    int usage = kHIDUsage_AppleVendor_TemperatureSensor;
+    CFNumberRef pageNum =
+        CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &page);
+    CFNumberRef usageNum =
+        CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &usage);
+    const void *values[2] = {pageNum, usageNum};
 
-  return (tempCount > 0) ? (tempSum / tempCount) : 0;
+    CFDictionaryRef matching = CFDictionaryCreate(
+        kCFAllocatorDefault, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    CFRelease(pageNum);
+    CFRelease(usageNum);
+
+    IOHIDEventSystemClientRef client =
+        IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    if (client != NULL) {
+      IOHIDEventSystemClientSetMatching(client, matching);
+      CFRelease(matching);
+
+      CFArrayRef services = IOHIDEventSystemClientCopyServices(client);
+      if (services != NULL) {
+        CFIndex count = CFArrayGetCount(services);
+        for (CFIndex i = 0; i < count; i++) {
+          IOHIDServiceClientRef service =
+              (IOHIDServiceClientRef)CFArrayGetValueAtIndex(services, i);
+          if (service == NULL)
+            continue;
+
+          CFStringRef productRef =
+              IOHIDServiceClientCopyProperty(service, CFSTR("Product"));
+          if (productRef == NULL)
+            continue;
+
+          char product[128] = {0};
+          CFStringGetCString(productRef, product, sizeof(product),
+                             kCFStringEncodingUTF8);
+
+          IOHIDEventRef event = IOHIDServiceClientCopyEvent(
+              service, kIOHIDEventTypeTemperature, 0, 0);
+          if (event == NULL) {
+            CFRelease(productRef);
+            continue;
+          }
+
+          double temp =
+              IOHIDEventGetFloatValue(event, kIOHIDEventTypeTemperature << 16);
+          CFRelease(event);
+          CFRelease(productRef);
+
+          if (temp > 0 && temp < 150) {
+            if (strstr(product, "PMU tdie") != NULL ||
+                strstr(product, "pACC") != NULL ||
+                strstr(product, "eACC") != NULL) {
+              if (cpuCount == 0) { // Only use HID if SMC didn't find anything
+                cpuSum += temp;
+                cpuCount++;
+              }
+            } else if (strstr(product, "GPU") != NULL) {
+              if (gpuCount == 0) {
+                gpuSum += temp;
+                gpuCount++;
+              }
+            }
+          }
+        }
+        CFRelease(services);
+      }
+      CFRelease(client);
+    } else {
+      CFRelease(matching);
+    }
+  }
+
+  if (cpuCount > 0)
+    *outCpuTemp = cpuSum / cpuCount;
+  if (gpuCount > 0)
+    *outGpuTemp = gpuSum / gpuCount;
+
+  // Return max of both as "SoC Temp" for backward compatibility if needed
+  return (*outCpuTemp > *outGpuTemp) ? *outCpuTemp : *outGpuTemp;
 }
 
 PowerMetrics samplePowerMetrics(int durationMs) {
-  PowerMetrics metrics = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+  PowerMetrics metrics = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
   if (g_subscription == NULL || g_channels == NULL) {
     if (initIOReport() != 0) {
@@ -481,7 +562,7 @@ PowerMetrics samplePowerMetrics(int durationMs) {
     }
   }
 
-  metrics.socTemp = readSocTemperature();
+  metrics.socTemp = readSocTemperature(&metrics.cpuTemp, &metrics.gpuTemp);
 
   if (g_smcConn) {
     metrics.systemPower = SMCGetFloatValue(g_smcConn, "PSTR");

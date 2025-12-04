@@ -112,7 +112,6 @@ var (
 			Help: "Current GPU frequency in MHz",
 		},
 	)
-
 	powerUsage = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "mactop_power_watts",
@@ -127,12 +126,14 @@ var (
 			Help: "Current SoC temperature in Celsius",
 		},
 	)
-
-	thermalState = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "mactop_thermal_state",
-			Help: "Current thermal state (0=Nominal, 1=Fair, 2=Serious, 3=Critical)",
-		},
+	gpuTemp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "mactop_gpu_temperature_celsius",
+		Help: "Current GPU temperature in Celsius",
+	})
+	thermalState = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "mactop_thermal_state",
+		Help: "Current thermal state (0=Nominal, 1=Fair, 2=Serious, 3=Critical)",
+	},
 	)
 
 	memoryUsage = prometheus.NewGaugeVec(
@@ -177,6 +178,7 @@ func startPrometheusServer(port string) {
 	registry.MustRegister(gpuFreqMHz)
 	registry.MustRegister(powerUsage)
 	registry.MustRegister(socTemp)
+	registry.MustRegister(gpuTemp)
 	registry.MustRegister(thermalState)
 	registry.MustRegister(memoryUsage)
 	registry.MustRegister(networkSpeed)
@@ -208,7 +210,8 @@ type CPUMetrics struct {
 	ANEW, CPUW, GPUW, DRAMW, GPUSRAMW, PackageW                      float64
 	CoreUsages                                                       []float64
 	Throttled                                                        bool
-	SocTemp                                                          float64
+	CPUTemp                                                          float64
+	GPUTemp                                                          float64
 }
 
 type SystemInfo struct {
@@ -521,7 +524,7 @@ func setupUI() {
 	cpuGauge, gpuGauge, memoryGauge, aneGauge = gauges[0], gauges[1], gauges[2], gauges[3]
 
 	PowerChart, NetworkInfo = w.NewParagraph(), w.NewParagraph()
-	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk Info"
+	PowerChart.Title, NetworkInfo.Title = "Power Usage", "Network & Disk"
 
 	termWidth, _ := ui.TerminalDimensions()
 	numPoints := termWidth / 2
@@ -573,7 +576,7 @@ func updateModelText() {
 		gpuCoreCountStr = fmt.Sprintf("%d", gpuCoreCount)
 	}
 
-	modelText.Text = fmt.Sprintf("%s\n%d Cores (%d Efficiency, %d Performance)\n%s GPU Cores",
+	modelText.Text = fmt.Sprintf("%s\n%d Cores\n%d E-Cores\n%d P-Cores\n%s GPU Cores",
 		modelName,
 		eCoreCount+pCoreCount,
 		eCoreCount,
@@ -1157,13 +1160,14 @@ func main() {
 		GPUSRAMW:  initialSocMetrics.GPUSRAMPower,
 		PackageW:  totalPower,
 		Throttled: throttled,
-		SocTemp:   float64(initialSocMetrics.SocTemp),
+		CPUTemp:   float64(initialSocMetrics.CPUTemp),
+		GPUTemp:   float64(initialSocMetrics.GPUTemp),
 	}
 	gpuMetrics := GPUMetrics{
 		FreqMHz:       int(initialSocMetrics.GPUFreqMHz),
 		ActivePercent: initialSocMetrics.GPUActive,
 		Power:         initialSocMetrics.GPUPower + initialSocMetrics.GPUSRAMPower,
-		Temp:          initialSocMetrics.SocTemp,
+		Temp:          initialSocMetrics.GPUTemp,
 	}
 
 	// Send initial data to channels (buffered, so won't block)
@@ -1445,14 +1449,15 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			GPUSRAMW:  m.GPUSRAMPower,
 			PackageW:  totalPower,
 			Throttled: throttled,
-			SocTemp:   float64(m.SocTemp),
+			CPUTemp:   float64(m.CPUTemp),
+			GPUTemp:   float64(m.GPUTemp),
 		}
 
 		gpuMetrics := GPUMetrics{
 			FreqMHz:       int(m.GPUFreqMHz),
 			ActivePercent: m.GPUActive,
 			Power:         m.GPUPower + m.GPUSRAMPower,
-			Temp:          m.SocTemp,
+			Temp:          m.GPUTemp,
 		}
 
 		select {
@@ -1612,29 +1617,28 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	}
 	totalUsage /= float64(len(coreUsages))
 	cpuGauge.Percent = int(totalUsage)
-	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) - CPU Usage: %.2f%%",
+	cpuGauge.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%% (%d°C)",
 		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
 		cpuCoreWidget.eCoreCount,
 		cpuCoreWidget.pCoreCount,
 		totalUsage,
+		int(cpuMetrics.CPUTemp),
 	)
-	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%%",
+	cpuCoreWidget.Title = fmt.Sprintf("mactop - %d Cores (%dE/%dP) %.2f%% (%d°C)",
 		cpuCoreWidget.eCoreCount+cpuCoreWidget.pCoreCount,
 		cpuCoreWidget.eCoreCount,
 		cpuCoreWidget.pCoreCount,
 		totalUsage,
+		int(cpuMetrics.CPUTemp),
 	)
 	aneUtil := float64(cpuMetrics.ANEW / 1 / 8.0 * 100)
 	aneGauge.Title = fmt.Sprintf("ANE Usage: %.2f%% @ %.2f W", aneUtil, cpuMetrics.ANEW)
 	aneGauge.Percent = int(aneUtil)
 
 	thermalStr, _ := getThermalStateString()
-	tempStr := ""
-	if cpuMetrics.SocTemp > 0 {
-		tempStr = fmt.Sprintf(" @ %.0f°C", cpuMetrics.SocTemp)
-	}
-	PowerChart.Title = fmt.Sprintf("%.1fW Total%s", cpuMetrics.PackageW, tempStr)
-	PowerChart.Text = fmt.Sprintf("CPU: %.2f W | GPU: %.2f W\nANE: %.2f W | DRAM: %.2f W\nTotal: %.2f W | %s",
+
+	PowerChart.Title = fmt.Sprintf("Power Usage")
+	PowerChart.Text = fmt.Sprintf("CPU: %.2f W | GPU: %.2f W\nANE: %.2f W | DRAM: %.2f W\nTotal: %.2f W\nThermals: %s",
 		cpuMetrics.CPUW,
 		cpuMetrics.GPUW+cpuMetrics.GPUSRAMW,
 		cpuMetrics.ANEW,
@@ -1679,7 +1683,8 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	powerUsage.With(prometheus.Labels{"component": "ane"}).Set(cpuMetrics.ANEW)
 	powerUsage.With(prometheus.Labels{"component": "dram"}).Set(cpuMetrics.DRAMW)
 	powerUsage.With(prometheus.Labels{"component": "total"}).Set(cpuMetrics.PackageW)
-	socTemp.Set(cpuMetrics.SocTemp)
+	socTemp.Set(cpuMetrics.CPUTemp)
+	gpuTemp.Set(cpuMetrics.GPUTemp)
 	thermalState.Set(float64(thermalStateNum))
 
 	memoryUsage.With(prometheus.Labels{"type": "used"}).Set(float64(memoryMetrics.Used) / 1024 / 1024 / 1024)
@@ -1765,7 +1770,7 @@ func getVolumes() []VolumeInfo {
 		seen[p.Device] = true
 		var name string
 		if p.Mountpoint == "/" {
-			name = "Macintosh HD"
+			name = "Mac HD"
 		} else {
 			name = strings.TrimPrefix(p.Mountpoint, "/Volumes/")
 		}

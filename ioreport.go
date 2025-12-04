@@ -51,6 +51,8 @@ typedef struct {
     int gpuFreqMHz;
     double gpuActive;
     float socTemp;
+    float cpuTemp;
+    float gpuTemp;
 } PowerMetrics;
 
 int initIOReport();
@@ -71,6 +73,8 @@ type SocMetrics struct {
 	GPUFreqMHz   int32   `json:"gpu_freq_mhz"`
 	GPUActive    float64 `json:"-"`
 	SocTemp      float32 `json:"soc_temp"`
+	CPUTemp      float32 `json:"cpu_temp"`
+	GPUTemp      float32 `json:"gpu_temp"`
 }
 
 func initSocMetrics() error {
@@ -93,6 +97,8 @@ func sampleSocMetrics(durationMs int) SocMetrics {
 		GPUFreqMHz:   int32(pm.gpuFreqMHz),
 		GPUActive:    float64(pm.gpuActive),
 		SocTemp:      float32(pm.socTemp),
+		CPUTemp:      float32(pm.cpuTemp),
+		GPUTemp:      float32(pm.gpuTemp),
 	}
 }
 

@@ -39,6 +39,8 @@ func runHeadless(count int) {
 		CoreUsages   []float64      `json:"core_usages"`
 		SystemInfo   SystemInfo     `json:"system_info"`
 		ThermalState string         `json:"thermal_state"`
+		CPUTemp      float32        `json:"cpu_temp"`
+		GPUTemp      float32        `json:"gpu_temp"`
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
@@ -77,6 +79,8 @@ func runHeadless(count int) {
 			CoreUsages:   percentages,
 			SystemInfo:   getSOCInfo(),
 			ThermalState: thermalStr,
+			CPUTemp:      m.CPUTemp,
+			GPUTemp:      m.GPUTemp,
 		}
 
 		if samplesCollected > 0 && count > 0 {
