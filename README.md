@@ -17,7 +17,7 @@
 - Apple Silicon Monitor Top written in Go Lang and CGO
 - Real-time CPU, GPU, ANE, and DRAM power wattage usage display
 - GPU frequency and usage percentage display
-- SoC temperature and Thermal State monitoring (Nominal, Fair, Serious, Critical)
+- **Temperature Monitoring**: Separate CPU and GPU temperatures + Thermal State
 - Detailed native metrics for CPU cores (E and P cores) via Apple's Mach Kernel API
 - Memory usage and swap information
 - Network usage information (upload/download speeds)
@@ -29,7 +29,8 @@
 - Customizable UI color (green, red, blue, cyan, magenta, yellow, and white) (C to cycle colors)
 - Customizable update interval (default is 1000ms)
 - Process list matching htop format (VIRT in GB, CPU normalized by core count)
-- **Process Management**: Kill processes directly from the UI (F9)
+- **Process Management**: Kill processes directly from the UI (F9). List pauses while selecting.
+- **Headless Mode**: Output JSON metrics to stdout for scripting/logging (`--headless`)
 - Party Mode (Randomly cycles through colors) (P to toggle)
 - Optional Prometheus Metrics server (default is disabled)
 - Support for all Apple Silicon models
@@ -92,7 +93,9 @@ mactop --interval 1000 --color green
 
 ## mactop Flags
 
-- `--interval` or `-i`: Set the update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
+- `--headless`: Run in headless mode (no TUI, output JSON to stdout).
+- `--count`: Number of samples to collect in headless mode (0 = infinite).
+- `--interval` or `-i`: Set the update interval in milliseconds. Default is 1000.
 - `--color` or `-c`: Set the UI color. Default is white. 
 Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)
 - `--prometheus` or `-p`: Set and enable the local Prometheus metrics server on the given port. Default is disabled. (e.g. -p 2112 to enable Prometheus metrics on port 2112)
@@ -109,8 +112,10 @@ Use the following keys to interact with the application while its running:
 - `l`: Cycle through the 6 available layouts.
 - `+` or `=`: Increase update interval (slower updates).
 - `-`: Decrease update interval (faster updates).
-- `F9`: Kill the currently selected process.
-- `h`: Toggle the help menu.
+- `F9`: Kill the currently selected process (pauses updates while selecting).
+- `Arrow Keys` or `h/j/k/l`: Navigate the process list and select columns.
+- `Enter` or `Space`: Sort by the selected column.
+- `h` or `?`: Toggle the help menu.
 
 ## Example Theme (Green) Screenshot (mactop -c green) on Advanced layout (Hit "l" key to toggle)
 
