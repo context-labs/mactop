@@ -145,8 +145,8 @@ func setupUI() {
 	gpuCoreCount := appleSiliconModel.GPUCoreCount
 	updateModelText()
 	updateHelpText()
-	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
-	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %s", modelName, eCoreCount, pCoreCount, gpuCoreCount)
+	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %d", modelName, eCoreCount, pCoreCount, gpuCoreCount)
+	stderrLogger.Printf("Model: %s\nE-Core Count: %d\nP-Core Count: %d\nGPU Core Count: %d", modelName, eCoreCount, pCoreCount, gpuCoreCount)
 
 	processList = w.NewList()
 	processList.Title = "Process List"
@@ -982,7 +982,9 @@ func setupLogfile() (*os.File, error) {
 
 func getThermalStateString() (string, bool) {
 	state := getSocThermalState()
-	states := []string{"Nominal", "Fair", "Serious", "Critical"}
+	// NSProcessInfoThermalState: 0=Nominal, 1=Fair, 2=Serious, 3=Critical
+	// powermetrics terminology: Nominal, Moderate, Heavy, Critical (or Trapping)
+	states := []string{"Nominal", "Moderate", "Heavy", "Critical"}
 	if state >= 0 && state < len(states) {
 		return states[state], state > 0
 	}
@@ -1319,9 +1321,9 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	thermalStateVal, _ := getThermalStateString()
 	thermalStateNum := 0
 	switch thermalStateVal {
-	case "Fair":
+	case "Moderate":
 		thermalStateNum = 1
-	case "Serious":
+	case "Heavy":
 		thermalStateNum = 2
 	case "Critical":
 		thermalStateNum = 3
