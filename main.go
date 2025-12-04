@@ -814,8 +814,8 @@ func updateProcessList() {
 	case ui.ColorWhite:
 		themeColorStr = "white"
 	}
-	termWidth, _ := 200, 200 // Fixed for calling repeatedly
-	minWidth := 40           // Set a minimum width to prevent crashes
+	termWidth, _ := ui.TerminalDimensions()
+	minWidth := 40 // Set a minimum width to prevent crashes
 	availableWidth := max(termWidth-2, minWidth)
 	maxWidths := map[string]int{
 		"PID":  5,  // Minimum for PID
@@ -912,6 +912,8 @@ func updateProcessList() {
 		resStr := formatResMemorySize(p.RSS)
 		username := truncateWithEllipsis(p.User, maxWidths["USER"])
 
+		cmdName := p.Command // Already simplified by ps -c
+
 		line := fmt.Sprintf("%*d %-*s %*s %*s %*.1f%% %*.1f%% %*s %-s",
 			maxWidths["PID"], p.PID,
 			maxWidths["USER"], username,
@@ -920,7 +922,7 @@ func updateProcessList() {
 			maxWidths["CPU"]-1, p.CPU, // -1 for % symbol
 			maxWidths["MEM"]-1, p.Memory, // -1 for % symbol
 			maxWidths["TIME"], timeStr,
-			truncateWithEllipsis(p.Command, maxWidths["CMD"]),
+			truncateWithEllipsis(cmdName, maxWidths["CMD"]),
 		)
 
 		if p.User != currentUser {
@@ -1508,7 +1510,10 @@ func collectProcessMetrics(done chan struct{}, processMetricsChan chan []Process
 }
 
 func getProcessList() ([]ProcessMetrics, error) {
-	cmd := exec.Command("ps", "-Ao", "pid,user,%cpu,%mem,vsz,rss,comm,state,start,time")
+	// Use -c to get just the executable name (not full path)
+	// Put comm at the end to handle spaces in app names (e.g. "Google Chrome")
+	// Removed 'start' field as it can contain spaces and break parsing, and we don't display it.
+	cmd := exec.Command("ps", "-c", "-Ao", "pid,user,%cpu,%mem,vsz,rss,state,time,comm")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -1527,7 +1532,7 @@ func getProcessList() ([]ProcessMetrics, error) {
 		}
 
 		fields := strings.Fields(line)
-		if len(fields) < 10 {
+		if len(fields) < 9 {
 			continue
 		}
 
@@ -1541,10 +1546,10 @@ func getProcessList() ([]ProcessMetrics, error) {
 		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)
 
-		command := fields[6]
-		state := fields[7]
-		started := fields[8]
-		timeStr := fields[9]
+		state := fields[6]
+		timeStr := fields[7]
+		// Join all remaining fields as the command name
+		command := strings.Join(fields[8:], " ")
 
 		processes = append(processes, ProcessMetrics{
 			PID:         pid,
@@ -1555,7 +1560,7 @@ func getProcessList() ([]ProcessMetrics, error) {
 			RSS:         rss,
 			Command:     command,
 			State:       state,
-			Started:     started,
+			Started:     "", // Removed from ps command
 			Time:        timeStr,
 			LastUpdated: time.Now(),
 		})
