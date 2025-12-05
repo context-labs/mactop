@@ -164,7 +164,7 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 		cols = (totalCores + rows - 1) / rows // Recalculate columns
 	}
 	barWidth := availableWidth / cols
-	labelWidth := 2 // Width for core labels
+	labelWidth := 3 // Width for core labels
 
 	for i := 0; i < totalCores; i++ {
 		col := i % cols
@@ -184,7 +184,7 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 
 		usage := w.cores[actualIndex]
 
-		label := fmt.Sprintf("%d", actualIndex)
+		label := fmt.Sprintf("%-2d", actualIndex)
 		buf.SetString(label, ui.NewStyle(themeColor), image.Pt(x, y))
 
 		availWidth := barWidth - labelWidth - 2 // -2 for brackets

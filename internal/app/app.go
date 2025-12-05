@@ -30,12 +30,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"sync"
+
 	ui "github.com/gizak/termui/v3"
 	w "github.com/gizak/termui/v3/widgets"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 )
+
+var renderMutex sync.Mutex
 
 func startPrometheusServer(port string) {
 	registry := prometheus.NewRegistry()
@@ -292,8 +296,10 @@ func toggleHelpMenu() {
 	} else {
 		applyLayout(currentConfig.DefaultLayout)
 	}
+	renderMutex.Lock()
 	ui.Clear()
-	renderUI()
+	ui.Render(grid)
+	renderMutex.Unlock()
 }
 
 func togglePartyMode() {
@@ -307,8 +313,10 @@ func togglePartyMode() {
 					return
 				}
 				cycleTheme()
+				renderMutex.Lock()
 				ui.Clear()
 				ui.Render(grid)
+				renderMutex.Unlock()
 			}
 		}()
 	} else if partyTicker != nil {
@@ -609,7 +617,7 @@ func handleProcessListEvents(e ui.Event) {
 			killPending = false
 			updateProcessList()
 		}
-		ui.Render(processList, grid)
+		renderUI()
 		return
 	}
 
@@ -655,6 +663,8 @@ func handleProcessListEvents(e ui.Event) {
 }
 
 func renderUI() {
+	renderMutex.Lock()
+	defer renderMutex.Unlock()
 	ui.Render(grid)
 }
 
@@ -871,19 +881,16 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 				case cpuMetrics := <-cpuMetricsChan:
 					updateCPUUI(cpuMetrics)
 					updateTotalPowerChart(cpuMetrics.PackageW)
-					ui.Render(grid)
 				default:
 				}
 				select {
 				case gpuMetrics := <-gpuMetricsChan:
 					updateGPUUI(gpuMetrics)
-					ui.Render(grid)
 				default:
 				}
 				select {
 				case netdiskMetrics := <-netdiskMetricsChan:
 					updateNetDiskUI(netdiskMetrics)
-					ui.Render(grid)
 				default:
 				}
 				select {
@@ -892,9 +899,9 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 						lastProcesses = processes
 						updateProcessList()
 					}
-					renderUI()
 				default:
 				}
+				renderUI()
 
 			}
 		}
@@ -923,8 +930,10 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 			case "r":
 				termWidth, termHeight := ui.TerminalDimensions()
 				grid.SetRect(0, 0, termWidth, termHeight)
+				renderMutex.Lock()
 				ui.Clear()
-				renderUI()
+				ui.Render(grid)
+				renderMutex.Unlock()
 			case "p":
 				togglePartyMode()
 			case "c":
@@ -932,13 +941,17 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 				grid.SetRect(0, 0, termWidth, termHeight)
 				cycleTheme()
 				saveConfig()
+				renderMutex.Lock()
 				ui.Clear()
-				renderUI()
+				ui.Render(grid)
+				renderMutex.Unlock()
 			case "l":
 				cycleLayout()
 				saveConfig()
+				renderMutex.Lock()
 				ui.Clear()
-				renderUI()
+				ui.Render(grid)
+				renderMutex.Unlock()
 			case "h", "?":
 				toggleHelpMenu()
 			case "-", "_":
