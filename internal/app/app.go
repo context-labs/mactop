@@ -731,9 +731,6 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 	}
 	defer ui.Close()
 
-	// Override with CLI flags if provided (we need to add a flag for this)
-	// For now, let's just use the config/auto-detect.
-
 	if err := initSocMetrics(); err != nil {
 		stderrLogger.Fatalf("failed to initialize metrics: %v", err)
 	}
@@ -1135,9 +1132,6 @@ func collectProcessMetrics(done chan struct{}, processMetricsChan chan []Process
 }
 
 func getProcessList() ([]ProcessMetrics, error) {
-	// Use -c to get just the executable name (not full path)
-	// Put comm at the end to handle spaces in app names (e.g. "Google Chrome")
-	// Removed 'start' field as it can contain spaces and break parsing, and we don't display it.
 	cmd := exec.Command("ps", "-c", "-Ao", "pid,user,%cpu,%mem,vsz,rss,state,time,comm")
 	output, err := cmd.Output()
 	if err != nil {
@@ -1480,8 +1474,6 @@ func getSOCInfo() SystemInfo {
 	gpuCoreCountStr := getGPUCores()
 	gpuCoreCount, _ := strconv.Atoi(gpuCoreCountStr)
 	if gpuCoreCount == 0 && gpuCoreCountStr != "?" {
-		// Try to parse if it's not "?" and Atoi failed (though getGPUCores returns clean string usually)
-		// If it is "?", it stays 0
 	}
 
 	return SystemInfo{
@@ -1572,20 +1564,6 @@ func getGPUCores() string {
 	return "?"
 }
 func formatBytes(val float64, unitType string) string {
-	// val is expected to be in bytes for "byte" unit, or KB for "kb", etc.
-	// But wait, the input `val` from metrics might be in different units.
-	// NetDiskMetrics has BytesPerSec (bytes) and KBytesPerSec (KB).
-	// Let's assume input `val` is always in BYTES for consistency if possible,
-	// or we handle it based on context.
-	// Actually, let's make this function take bytes and convert.
-
-	// However, updateNetDiskUI passes:
-	// OutBytesPerSec (bytes)
-	// ReadKBytesPerSec (KB)
-	// So we need to be careful.
-
-	// Let's define formatBytes taking bytes.
-
 	units := []string{"B", "KB", "MB", "GB", "TB"}
 
 	targetUnit := strings.ToLower(unitType)
@@ -1616,7 +1594,6 @@ func formatBytes(val float64, unitType string) string {
 		}
 		suffix = units[i]
 	default:
-		// Default to auto behavior if unknown
 		i := 0
 		for value >= 1000 && i < len(units)-1 {
 			value /= 1024
