@@ -5,15 +5,16 @@ import (
 )
 
 const (
-	LayoutDefault     = "default"
-	LayoutAlternative = "alternative"
-	LayoutVertical    = "vertical"
-	LayoutCompact     = "compact"
-	LayoutDashboard   = "dashboard"
-	LayoutGaugesOnly  = "gauges_only"
+	LayoutDefault         = "default"
+	LayoutAlternative     = "alternative"
+	LayoutAlternativeFull = "alternative_full"
+	LayoutVertical        = "vertical"
+	LayoutCompact         = "compact"
+	LayoutDashboard       = "dashboard"
+	LayoutGaugesOnly      = "gauges_only"
 )
 
-var layoutOrder = []string{LayoutDefault, LayoutAlternative, LayoutVertical, LayoutCompact, LayoutDashboard, LayoutGaugesOnly}
+var layoutOrder = []string{LayoutDefault, LayoutAlternative, LayoutAlternativeFull, LayoutVertical, LayoutCompact, LayoutDashboard, LayoutGaugesOnly}
 
 func setupGrid() {
 	applyLayout(currentConfig.DefaultLayout)
@@ -46,6 +47,25 @@ func applyLayout(layoutName string) {
 					ui.NewRow(1.0/2, gpuGauge),
 					ui.NewCol(1.0, ui.NewRow(1.0, memoryGauge)),
 				),
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0/6, modelText),
+				ui.NewCol(1.0/3, NetworkInfo),
+				ui.NewCol(1.0/4, PowerChart),
+				ui.NewCol(1.0/4, sparklineGroup),
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0, processList),
+			),
+		)
+	case LayoutAlternativeFull:
+		grid.Set(
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0, cpuCoreWidget),
+			),
+			ui.NewRow(1.0/4,
+				ui.NewCol(1.0/2, gpuGauge),
+				ui.NewCol(1.0/2, memoryGauge),
 			),
 			ui.NewRow(1.0/4,
 				ui.NewCol(1.0/6, modelText),

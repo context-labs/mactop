@@ -24,7 +24,7 @@
 - Disk I/O activity (read/write speeds)
 - Multiple volume display (shows Mac HD + mounted external volumes)
 - Easy-to-read terminal UI
-- **6 Layouts**: Default, Alternative, Vertical, Compact, Dashboard, and Gauges Only (`L` to cycle layouts)
+- **7 Layouts**: Default, Alternative, Alternative Full, Vertical, Compact, Dashboard, and Gauges Only (`L` to cycle layouts)
 - **Persistent Settings**: Remembers your Layout and Theme choice across restarts
 - Customizable UI color (green, red, blue, cyan, magenta, yellow, and white) (`C` to cycle colors)
 - Customizable update interval (default is 1000ms) (`-` or `=` to speed up, `+` to slow down)
@@ -114,7 +114,7 @@ Use the following keys to interact with the application while its running:
 - `r`: Refresh the UI data manually.
 - `c`: Cycle through the color themes.
 - `p`: Party Mode (Randomly cycles through colors)
-- `l`: Cycle through the 6 available layouts.
+- `l`: Cycle through the 7 available layouts.
 - `+` or `=`: Increase update interval (slower updates).
 - `-`: Decrease update interval (faster updates).
 - `F9`: Kill the currently selected process (pauses updates while selecting).
