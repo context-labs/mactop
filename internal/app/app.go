@@ -328,59 +328,6 @@ func StderrToLogfile(logfile *os.File) {
 	syscall.Dup2(int(logfile.Fd()), 2)
 }
 
-func pollKeyboardInput(tty *os.File) <-chan string {
-	ch := make(chan string)
-	go func() {
-		buf := make([]byte, 16)
-		for {
-			n, err := tty.Read(buf)
-			if err != nil {
-				close(ch)
-				return
-			}
-			if n > 0 {
-				if n >= 3 && buf[0] == 27 && (buf[1] == 91 || buf[1] == 79) {
-					switch buf[2] {
-					case 65:
-						ch <- "<Up>"
-					case 66:
-						ch <- "<Down>"
-					case 67:
-						ch <- "<Right>"
-					case 68:
-						ch <- "<Left>"
-					case 50: // 2
-						if n >= 5 && buf[3] == 48 && buf[4] == 126 { // 0, ~
-							ch <- "<F9>"
-						} else {
-							ch <- "<Escape>"
-						}
-					default:
-						ch <- "<Escape>"
-					}
-				} else if n == 1 {
-					b := buf[0]
-					switch b {
-					case 3:
-						ch <- "<C-c>"
-					case 27:
-						ch <- "<Escape>"
-					case 13, 10:
-						ch <- "<Enter>"
-					case 32:
-						ch <- "<Space>"
-					default:
-						ch <- string(b)
-					}
-				} else if n == 2 && buf[0] == 27 {
-					ch <- "<Escape>"
-				}
-			}
-		}
-	}()
-	return ch
-}
-
 func parseTimeString(timeStr string) float64 {
 	var hours, minutes int
 	var seconds float64
@@ -617,7 +564,6 @@ func handleProcessListEvents(e ui.Event) {
 			killPending = false
 			updateProcessList()
 		}
-		renderUI()
 		return
 	}
 
@@ -657,9 +603,7 @@ func handleProcessListEvents(e ui.Event) {
 		cycleTheme()
 		saveConfig()
 		updateProcessList()
-		renderUI()
 	}
-	renderUI()
 }
 
 func renderUI() {
@@ -797,13 +741,6 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 
 	StderrToLogfile(logfile)
 
-	ttyFile, err = os.Open("/dev/tty")
-	if err != nil {
-		ui.Close()
-		stderrLogger.Fatalf("failed to open /dev/tty: %v", err)
-	}
-	defer ttyFile.Close()
-
 	if prometheusPort != "" {
 		startPrometheusServer(prometheusPort)
 		stderrLogger.Printf("Prometheus metrics available at http://localhost:%s/metrics\n", prometheusPort)
@@ -879,25 +816,33 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 			case <-ticker.C:
 				select {
 				case cpuMetrics := <-cpuMetricsChan:
+					renderMutex.Lock()
 					updateCPUUI(cpuMetrics)
 					updateTotalPowerChart(cpuMetrics.PackageW)
+					renderMutex.Unlock()
 				default:
 				}
 				select {
 				case gpuMetrics := <-gpuMetricsChan:
+					renderMutex.Lock()
 					updateGPUUI(gpuMetrics)
+					renderMutex.Unlock()
 				default:
 				}
 				select {
 				case netdiskMetrics := <-netdiskMetricsChan:
+					renderMutex.Lock()
 					updateNetDiskUI(netdiskMetrics)
+					renderMutex.Unlock()
 				default:
 				}
 				select {
 				case processes := <-processMetricsChan:
 					if processList.SelectedRow == 0 {
 						lastProcesses = processes
+						renderMutex.Lock()
 						updateProcessList()
+						renderMutex.Unlock()
 					}
 				default:
 				}
@@ -915,88 +860,79 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 		}
 	}()
 	lastUpdateTime = time.Now()
-	keyboardInput := pollKeyboardInput(ttyFile)
+	// Keyboard input handling via termui
 	for {
 		select {
-		case key := <-keyboardInput:
-			fakeEvent := ui.Event{Type: ui.KeyboardEvent, ID: key}
-			handleProcessListEvents(fakeEvent)
-			switch key {
-			case "q", "<C-c>":
-				close(done)
-				ui.Close()
-				os.Exit(0)
-				return
-			case "r":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
-				renderMutex.Lock()
-				ui.Clear()
-				ui.Render(grid)
-				renderMutex.Unlock()
-			case "p":
-				togglePartyMode()
-			case "c":
-				termWidth, termHeight := ui.TerminalDimensions()
-				grid.SetRect(0, 0, termWidth, termHeight)
-				cycleTheme()
-				saveConfig()
-				renderMutex.Lock()
-				ui.Clear()
-				ui.Render(grid)
-				renderMutex.Unlock()
-			case "l":
-				cycleLayout()
-				saveConfig()
-				renderMutex.Lock()
-				ui.Clear()
-				ui.Render(grid)
-				renderMutex.Unlock()
-			case "h", "?":
-				toggleHelpMenu()
-			case "-", "_":
-				updateInterval -= 100
-				if updateInterval > 5000 {
-					updateInterval = 5000
-				}
-				updateHelpText()
-				updateModelText()
-				select {
-				case interruptChan <- struct{}{}:
-				default:
-				}
-				select {
-				case interruptChan <- struct{}{}:
-				default:
-				}
-				renderUI()
-			case "+", "=":
-				updateInterval += 100
-				if updateInterval < 100 {
-					updateInterval = 100
-				}
-				updateHelpText()
-				updateModelText()
-				select {
-				case interruptChan <- struct{}{}:
-				default:
-				}
-				select {
-				case interruptChan <- struct{}{}:
-				default:
-				}
-				renderUI()
-			}
 		case e := <-uiEvents:
-			if e.ID == "<Resize>" {
+			switch e.Type {
+			case ui.ResizeEvent:
 				payload := e.Payload.(ui.Resize)
-				grid.SetRect(0, 0, payload.Width, payload.Height)
-				renderUI()
+				termWidth, termHeight := payload.Width, payload.Height
+				renderMutex.Lock()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				ui.Clear()
+				ui.Render(grid)
+				renderMutex.Unlock()
+
+			case ui.KeyboardEvent:
+				key := e.ID
+				fakeEvent := ui.Event{Type: ui.KeyboardEvent, ID: key}
+				renderMutex.Lock()
+				handleProcessListEvents(fakeEvent)
+				ui.Render(grid)
+				renderMutex.Unlock()
+
+				switch key {
+				case "q", "<C-c>":
+					close(done)
+					ui.Close()
+					os.Exit(0)
+					return
+				case "r":
+					termWidth, termHeight := ui.TerminalDimensions()
+					renderMutex.Lock()
+					grid.SetRect(0, 0, termWidth, termHeight)
+					ui.Clear()
+					ui.Render(grid)
+					renderMutex.Unlock()
+				case "p":
+					togglePartyMode()
+				case "c":
+					renderMutex.Lock()
+					termWidth, termHeight := ui.TerminalDimensions()
+					grid.SetRect(0, 0, termWidth, termHeight)
+					renderMutex.Unlock()
+					cycleTheme()
+					saveConfig()
+					renderMutex.Lock()
+					ui.Clear()
+					ui.Render(grid)
+					renderMutex.Unlock()
+				case "l":
+					cycleLayout()
+					saveConfig()
+					renderMutex.Lock()
+					ui.Clear()
+					ui.Render(grid)
+					renderMutex.Unlock()
+				case "h", "?":
+					toggleHelpMenu()
+				case "-", "_":
+					updateInterval -= 100
+					if updateInterval < 100 {
+						updateInterval = 100
+					}
+					updateHelpText()
+					updateModelText()
+				case "+", "=":
+					updateInterval += 100
+					if updateInterval > 5000 {
+						updateInterval = 5000
+					}
+					updateHelpText()
+					updateModelText()
+				}
 			}
-		case <-done:
-			ui.Close()
-			os.Exit(0)
-			return
 		}
 	}
 }

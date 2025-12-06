@@ -163,8 +163,22 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 		rows = availableHeight
 		cols = (totalCores + rows - 1) / rows // Recalculate columns
 	}
-	barWidth := availableWidth / cols
 	labelWidth := 3 // Width for core labels
+
+	colWidths := make([]int, cols)
+	colXs := make([]int, cols)
+	baseWidth := availableWidth / cols
+	remainder := availableWidth % cols
+	currentX := 0
+	for c := 0; c < cols; c++ {
+		colXs[c] = currentX
+		w := baseWidth
+		if c < remainder {
+			w++
+		}
+		colWidths[c] = w
+		currentX += w
+	}
 
 	for i := 0; i < totalCores; i++ {
 		col := i % cols
@@ -175,8 +189,10 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 			continue
 		}
 
-		x := w.Inner.Min.X + (col * barWidth)
+		x := w.Inner.Min.X + colXs[col]
 		y := w.Inner.Min.Y + row
+
+		barWidth := colWidths[col]
 
 		if y >= w.Inner.Max.Y {
 			continue
@@ -187,21 +203,29 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 		label := fmt.Sprintf("%-2d", actualIndex)
 		buf.SetString(label, ui.NewStyle(themeColor), image.Pt(x, y))
 
-		availWidth := barWidth - labelWidth - 2 // -2 for brackets
+		availWidth := barWidth - labelWidth
+
 		if x+labelWidth+availWidth > w.Inner.Max.X {
 			availWidth = w.Inner.Max.X - x - labelWidth
 		}
 
-		if availWidth < 9 {
+		if availWidth < 9 { // 2 brackets + 7 for text/min bar
 			continue
 		}
 
-		usedWidth := int((usage / 100.0) * float64(availWidth-7))
+		textWidth := 7
+
+		innerBarWidth := availWidth - 2 - textWidth
+		if innerBarWidth < 0 {
+			innerBarWidth = 0
+		}
+
+		usedWidth := int((usage / 100.0) * float64(innerBarWidth))
 
 		buf.SetString("[", ui.NewStyle(BracketColor),
 			image.Pt(x+labelWidth, y))
 
-		for bx := 0; bx < availWidth-7; bx++ {
+		for bx := 0; bx < innerBarWidth; bx++ {
 			char := " "
 			var color ui.Color
 			if bx < usedWidth {
@@ -222,9 +246,10 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 			buf.SetString(char, ui.NewStyle(color),
 				image.Pt(x+labelWidth+1+bx, y))
 		}
+
 		percentage := fmt.Sprintf("%5.1f%%", usage)
 		buf.SetString(percentage, ui.NewStyle(SecondaryTextColor),
-			image.Pt(x+labelWidth+availWidth-7, y))
+			image.Pt(x+labelWidth+1+innerBarWidth, y))
 
 		buf.SetString("]", ui.NewStyle(BracketColor),
 			image.Pt(x+labelWidth+availWidth-1, y))

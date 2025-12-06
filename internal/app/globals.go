@@ -39,7 +39,6 @@ var (
 	prometheusPort                               string
 	headless                                     bool
 	headlessCount                                int
-	ttyFile                                      *os.File
 	interruptChan                                = make(chan struct{}, 10)
 	lastNetStats                                 net.IOCountersStat
 	lastDiskStats                                disk.IOCountersStat

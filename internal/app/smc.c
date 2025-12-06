@@ -101,7 +101,7 @@ int SMCGetKeyCount(io_connect_t conn) {
   SMCKeyData_t val;
   kern_return_t result = SMCReadKey(conn, "#KEY", &val);
   if (result != kIOReturnSuccess) {
-    printf("SMCGetKeyCount: SMCReadKey failed with result %d\n", result);
+    // printf("SMCGetKeyCount: SMCReadKey failed with result %d\n", result);
     return 0;
   }
 
