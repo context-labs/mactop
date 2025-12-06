@@ -2,7 +2,7 @@
 
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/context-labs/mactop/total) ![GitHub Release](https://img.shields.io/github/v/release/context-labs/mactop)
 
-`mactop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips written by Carsen Klock. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, and other system metrics directly from your terminal!
+`mactop` is a terminal-based monitoring tool "top" designed to display real-time metrics for Apple Silicon chips written by Carsen Klock. It provides a simple and efficient way to monitor CPU and GPU usage, E-Cores and P-Cores, power consumption, GPU frequency, temperatures, and other system metrics directly from your terminal
 
 ![mactop](screenshotm.png)
 
@@ -13,21 +13,29 @@
 
 ## Features
 
+- **No sudo required** - Uses native Apple APIs (SMC, IOReport, IOKit, IOHIDEventSystemClient)
 - Apple Silicon Monitor Top written in Go Lang and CGO
-- Real-time CPU, GPU, and ANE power wattage usage display.
-- Detailed native metrics for CPU cores (E and P cores) (Apple's Mach Kernel API)
-- Memory usage and swap information.
-- Network usage information
-- Disk Activity Read/Write
+- Real-time CPU, GPU, ANE, DRAM, and system power wattage usage display
+- GPU frequency and usage percentage display
+- CPU and GPU temperatures + Thermal State
+- Detailed native metrics for CPU cores (E and P cores) via Apple's Mach Kernel API
+- Memory usage and swap information
+- Network usage information (upload/download speeds)
+- Disk I/O activity (read/write speeds)
+- Multiple volume display (shows Mac HD + mounted external volumes)
 - Easy-to-read terminal UI
-- Two layouts: default and alternative
-- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white)
-- Customizable update interval (default is 1000ms)
-- Processes list (sorted by CPU usage)
-- Disk Storage (Used, Total, Available)
-- Party Mode (Randomly cycles through colors)
-- Optional Prometheus Metrics server (default is disabled)
-- Support for all Apple Silicon models.
+- **7 Layouts**: Default, Alternative, Alternative Full, Vertical, Compact, Dashboard, and Gauges Only (`L` to cycle layouts)
+- **Persistent Settings**: Remembers your Layout and Theme choice across restarts
+- Customizable UI color (green, red, blue, cyan, magenta, yellow, and white) (`C` to cycle colors)
+- Customizable update interval (default is 1000ms) (`-` or `=` to speed up, `+` to slow down)
+- Process list matching htop format (VIRT in GB, CPU normalized by core count)
+- **Process Management**: Kill processes directly from the UI (F9). List pauses while selecting.
+- **Headless Mode**: Output JSON metrics to stdout for scripting/logging (`--headless`)
+- Party Mode (Randomly cycles through colors) (P to toggle)
+- Optional Prometheus Metrics server (default is disabled) (`-p <port>` or `--prometheus <port>`)
+- Support for all Apple Silicon models
+- **Auto-detect Light/Dark Mode**: Automatically adjusts UI colors based on your terminal's background color or system theme.
+- **Configurable Units**: Customize units for network, disk, and temperature display (`--unit-network`, `--unit-disk`, `--unit-temp`)
 
 ## Install via Homebrew
 
@@ -38,7 +46,7 @@ brew install mactop
 ```
 
 ```bash
-sudo mactop
+mactop
 ```
 
 ## Updating via Homebrew
@@ -70,29 +78,33 @@ To install `mactop`, follow these steps:
 
 4. Run the application:
    ```bash
-   sudo ./mactop
+   ./mactop
    ```
 
 ## Usage
 
 After installation, you can start `mactop` by simply running:
 ```bash
-sudo ./mactop
+./mactop
 ```
 
-`sudo` is required to run `mactop`
-
-Example with flags
+Example with flags:
 ```bash
-sudo mactop --interval 1000 --color green
+mactop --interval 1000 --color green
 ```
 
 ## mactop Flags
 
-- `--interval` or `-i`: Set the powermetrics update interval in milliseconds. Default is 1000. (For low-end M chips, you may want to increase this value)
+- `--headless`: Run in headless mode (no TUI, output JSON to stdout).
+- `--count`: Number of samples to collect in headless mode (0 = infinite).
+- `--interval` or `-i`: Set the update interval in milliseconds. Default is 1000.
 - `--color` or `-c`: Set the UI color. Default is white. 
 Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'. (-c green)
 - `--prometheus` or `-p`: Set and enable the local Prometheus metrics server on the given port. Default is disabled. (e.g. -p 2112 to enable Prometheus metrics on port 2112)
+- `--unit-network`: Network unit: auto, byte, kb, mb, gb (default: auto)
+- `--unit-disk`: Disk unit: auto, byte, kb, mb, gb (default: auto)
+- `--unit-temp`: Temperature unit: celsius, fahrenheit (default: celsius)
+- `--test` or `-t`: Test IOReport power metrics (no sudo required)
 - `--version` or `-v`: Print the version of mactop.
 - `--help` or `-h`: Show a help message about these flags and how to run mactop.
 
@@ -102,12 +114,91 @@ Use the following keys to interact with the application while its running:
 - `r`: Refresh the UI data manually.
 - `c`: Cycle through the color themes.
 - `p`: Party Mode (Randomly cycles through colors)
-- `l`: Toggle the main display's layout.
-- `h`: Toggle the help menu.
+- `l`: Cycle through the 7 available layouts.
+- `+` or `=`: Increase update interval (slower updates).
+- `-`: Decrease update interval (faster updates).
+- `F9`: Kill the currently selected process (pauses updates while selecting).
+- `Arrow Keys` or `h/j/k/l`: Navigate the process list and select columns.
+- `Enter` or `Space`: Sort by the selected column.
+- `h` or `?`: Toggle the help menu.
 
-## Example Theme (Green) Screenshot (sudo mactop -c green) on Advanced layout (Hit "l" key to toggle)
+## Example Theme (Green) Screenshot (mactop -c green) on Advanced layout (Hit "l" key to toggle)
 
 ![mactop theme](screenshota.png)
+
+## Example Headless Output (mactop --headless --count 1)
+
+```json
+[
+   {
+      "timestamp":"2025-12-04T00:43:06-07:00",
+      "soc_metrics":{
+         "cpu_power":5.971,
+         "gpu_power":1.43491417,
+         "ane_power":0,
+         "dram_power":4.119,
+         "gpu_sram_power":0.04,
+         "system_power":45.92987823486328,
+         "total_power":11.564914169999998,
+         "gpu_freq_mhz":645,
+         "soc_temp":66.51124,
+         "cpu_temp":66.51124,
+         "gpu_temp":59.767166
+      },
+      "memory":{
+         "total":137438953472,
+         "used":95795822592,
+         "available":41643130880,
+         "swap_total":21474836480,
+         "swap_used":20288831488
+      },
+      "net_disk":{
+         "out_packets_per_sec":333.8985188256889,
+         "out_bytes_per_sec":164.55632002792703,
+         "in_packets_per_sec":295.37176665349403,
+         "in_bytes_per_sec":39.33046303000927,
+         "read_ops_per_sec":2.6754689008468664,
+         "write_ops_per_sec":275.5732967872272,
+         "read_kbytes_per_sec":43.83488247147506,
+         "write_kbytes_per_sec":3763.2246601761335
+      },
+      "cpu_usage":24.052424536171074,
+      "gpu_usage":13.709099344350134,
+      "core_usages":[
+         55.73770491803278,
+         48.08743169398907,
+         64.32432432432432,
+         53.51351351351351,
+         39.45945945945946,
+         32.432432432432435,
+         31.182795698924732,
+         18.71657754010695,
+         12.365591397849462,
+         10.21505376344086,
+         60,
+         40.54054054054054,
+         5.347593582887701,
+         2.6737967914438503,
+         2.1505376344086025,
+         1.0810810810810811,
+         1.06951871657754,
+         1.0752688172043012,
+         1.0752688172043012,
+         0
+      ],
+      "system_info":{
+         "name":"Apple M1 Ultra",
+         "core_count":20,
+         "e_core_count":4,
+         "p_core_count":16,
+         "gpu_core_count":64
+      },
+      "thermal_state":"Moderate",
+      "cpu_temp":66.51124,
+      "gpu_temp":59.767166
+   }
+]
+```
 
 ## Confirmed tested working M series chips
 
@@ -142,11 +233,16 @@ Contributions are what make the open-source community such an amazing place to l
 
 ## What does mactop use to get real-time data?
 
+- **Apple SMC**: For SoC temperature sensors and System Power (PSTR)
+- **IOReport API**: For CPU, GPU, ANE, and DRAM power consumption (no sudo required)
+- **IOKit**: For GPU frequency table from `pmgr` device
+- **IOHIDEventSystemClient**: Fallback for SoC temperature sensors
+- **NSProcessInfo.thermalState**: For system thermal state (Nominal/Fair/Serious/Critical)
+- **Mach Kernel API** (`host_processor_info`): For CPU metrics (E and P cores) via CGO
+- **gopsutil**: For memory, swap, network, and disk I/O metrics
+- **ps**: For process list information
 - `sysctl`: For CPU model information
 - `system_profiler`: For GPU Core Count
-- `psutil`: For memory and swap metrics
-- `powermetrics`: For majority of GPU, Network, and Disk metrics
-- `host_processor_info`: For CPU metrics (E and P cores) Apple Mach Kernel API in CGO
 
 ## License
 
@@ -165,6 +261,6 @@ This tool is not officially supported by Apple. It is provided as is, and may no
 ## Acknowledgements
 
 - [termui](https://github.com/gizak/termui) for the terminal UI framework.
-- [gopsutil](https://github.com/shirou/gopsutil) for system memory monitoring.
+- [gopsutil](https://github.com/shirou/gopsutil) for system memory, network, and disk monitoring.
 - [asitop](https://github.com/tlkh/asitop) for the original inspiration!
 - [htop](https://github.com/htop-dev/htop) for the process list and CPU cores inspiration!
