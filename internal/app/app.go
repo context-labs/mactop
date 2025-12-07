@@ -644,6 +644,12 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 			fmt.Println("mactop version:", version)
 			os.Exit(0)
 		case "--test", "-t":
+			if i+1 < len(os.Args) {
+				testInput := os.Args[i+1]
+				fmt.Printf("Test input received: %s\n", testInput)
+				os.Exit(0)
+			}
+		case "--testapp", "-a":
 			fmt.Println("Testing IOReport power metrics...")
 			initSocMetrics()
 			for i := 0; i < 3; i++ {
