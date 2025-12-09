@@ -19,7 +19,7 @@ type CPUMetrics struct {
 	EClusterActive, EClusterFreqMHz, PClusterActive, PClusterFreqMHz int
 	ECores, PCores                                                   []int
 	CoreMetrics                                                      map[string]int
-	ANEW, CPUW, GPUW, DRAMW, GPUSRAMW, PackageW                      float64
+	ANEW, CPUW, GPUW, DRAMW, GPUSRAMW, PackageW, SystemW             float64
 	CoreUsages                                                       []float64
 	Throttled                                                        bool
 	CPUTemp                                                          float64
