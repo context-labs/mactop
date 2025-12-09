@@ -164,7 +164,7 @@ func GetProcessTextColor(isCurrentUser bool) string {
 			}
 			return currentConfig.Theme
 		}
-		return "black"
+		return "240"
 	}
 
 	if isCurrentUser {

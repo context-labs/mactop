@@ -69,6 +69,18 @@ func runHeadless(count int) {
 
 		thermalStr, _ := getThermalStateString()
 
+		componentSum := m.TotalPower
+		totalPower := m.SystemPower
+
+		if totalPower < componentSum {
+			totalPower = componentSum
+		}
+
+		residualSystem := totalPower - componentSum
+
+		m.SystemPower = residualSystem
+		m.TotalPower = totalPower
+
 		output := HeadlessOutput{
 			Timestamp:    time.Now().Format(time.RFC3339),
 			SocMetrics:   m,

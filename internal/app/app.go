@@ -2,14 +2,6 @@
 // mactop is a simple terminal based Apple Silicon power monitor written in Go Lang! github.com/context-labs/mactop
 package app
 
-/*
-#include <mach/mach_host.h>
-#include <mach/processor_info.h>
-#include <mach/mach_init.h>
-
-extern kern_return_t vm_deallocate(vm_map_t target_task, vm_address_t address, vm_size_t size);
-*/
-import "C"
 import (
 	"flag"
 	"fmt"
@@ -23,7 +15,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"net/http"
 
@@ -100,39 +91,6 @@ func GetCPUPercentages() ([]float64, error) {
 	}
 	lastCPUTimes = currentTimes
 	return percentages, nil
-}
-
-func GetCPUUsage() ([]CPUUsage, error) {
-	var numCPUs C.natural_t
-	var cpuLoad *C.processor_cpu_load_info_data_t
-	var cpuMsgCount C.mach_msg_type_number_t
-	host := C.mach_host_self()
-	kernReturn := C.host_processor_info(
-		host,
-		C.PROCESSOR_CPU_LOAD_INFO,
-		&numCPUs,
-		(*C.processor_info_array_t)(unsafe.Pointer(&cpuLoad)),
-		&cpuMsgCount,
-	)
-	if kernReturn != C.KERN_SUCCESS {
-		return nil, fmt.Errorf("error getting CPU info: %d", kernReturn)
-	}
-	defer C.vm_deallocate(
-		C.mach_task_self_,
-		(C.vm_address_t)(uintptr(unsafe.Pointer(cpuLoad))),
-		C.vm_size_t(cpuMsgCount)*C.sizeof_processor_cpu_load_info_data_t,
-	)
-	cpuLoadInfo := (*[1 << 30]C.processor_cpu_load_info_data_t)(unsafe.Pointer(cpuLoad))[:numCPUs:numCPUs]
-	cpuUsage := make([]CPUUsage, numCPUs)
-	for i := 0; i < int(numCPUs); i++ {
-		cpuUsage[i] = CPUUsage{
-			User:   float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_USER]),
-			System: float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_SYSTEM]),
-			Idle:   float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_IDLE]),
-			Nice:   float64(cpuLoadInfo[i].cpu_ticks[C.CPU_STATE_NICE]),
-		}
-	}
-	return cpuUsage, nil
 }
 
 func setupUI() {
@@ -568,11 +526,11 @@ func handleProcessListEvents(e ui.Event) {
 	}
 
 	switch e.ID {
-	case "<Up>", "k":
+	case "<Up>", "k", "<MouseWheelUp>":
 		if processList.SelectedRow > 0 {
 			processList.SelectedRow--
 		}
-	case "<Down>", "j":
+	case "<Down>", "j", "<MouseWheelDown>":
 		if processList.SelectedRow < len(processList.Rows)-1 {
 			processList.SelectedRow++
 		}
@@ -709,14 +667,9 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 	flag.IntVar(&headlessCount, "count", 0, "Number of samples to collect in headless mode (0 = infinite)")
 	flag.IntVar(&updateInterval, "interval", 1000, "Update interval in milliseconds")
 	flag.StringVar(&colorName, "color", "", "Set the UI color. Options are 'green', 'red', 'blue', 'cyan', 'magenta', 'yellow', and 'white'.")
-	flag.BoolVar(&setColor, "set-color", false, "Internal flag to indicate if color was set via CLI") // Used to differentiate default from CLI set
 	flag.StringVar(&networkUnit, "unit-network", "auto", "Network unit: auto, byte, kb, mb, gb")
 	flag.StringVar(&diskUnit, "unit-disk", "auto", "Disk unit: auto, byte, kb, mb, gb")
 	flag.StringVar(&tempUnit, "unit-temp", "celsius", "Temperature unit: celsius, fahrenheit")
-	var lightModeFlag bool
-	flag.BoolVar(&lightModeFlag, "light", false, "Enable light mode (dark text for light backgrounds)")
-	var darkModeFlag bool
-	flag.BoolVar(&darkModeFlag, "dark", false, "Enable dark mode (light text for dark backgrounds)")
 
 	loadConfig()
 
@@ -772,9 +725,13 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 
 	initialSocMetrics := sampleSocMetrics(100)
 	_, throttled := getThermalStateString()
-	totalPower := initialSocMetrics.TotalPower
-	if initialSocMetrics.SystemPower > totalPower {
+	componentSum := initialSocMetrics.TotalPower
+	totalPower := componentSum
+	systemResidual := 0.0
+
+	if initialSocMetrics.SystemPower > componentSum {
 		totalPower = initialSocMetrics.SystemPower
+		systemResidual = initialSocMetrics.SystemPower - componentSum
 	}
 	cpuMetrics := CPUMetrics{
 		CPUW:      initialSocMetrics.CPUPower,
@@ -782,6 +739,7 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 		ANEW:      initialSocMetrics.ANEPower,
 		DRAMW:     initialSocMetrics.DRAMPower,
 		GPUSRAMW:  initialSocMetrics.GPUSRAMPower,
+		SystemW:   systemResidual,
 		PackageW:  totalPower,
 		Throttled: throttled,
 		CPUTemp:   float64(initialSocMetrics.CPUTemp),
@@ -864,78 +822,81 @@ For more information, see https://github.com/context-labs/mactop written by Cars
 	}()
 	lastUpdateTime = time.Now()
 	// Keyboard input handling via termui
-	for {
-		select {
-		case e := <-uiEvents:
-			switch e.Type {
-			case ui.ResizeEvent:
-				payload := e.Payload.(ui.Resize)
-				termWidth, termHeight := payload.Width, payload.Height
+	for e := range uiEvents {
+		switch e.Type {
+		case ui.ResizeEvent:
+			payload := e.Payload.(ui.Resize)
+			termWidth, termHeight := payload.Width, payload.Height
+			renderMutex.Lock()
+			grid.SetRect(0, 0, termWidth, termHeight)
+			ui.Clear()
+			ui.Render(grid)
+			renderMutex.Unlock()
+
+		case ui.KeyboardEvent:
+			key := e.ID
+			fakeEvent := ui.Event{Type: ui.KeyboardEvent, ID: key}
+			renderMutex.Lock()
+			handleProcessListEvents(fakeEvent)
+			ui.Render(grid)
+			renderMutex.Unlock()
+
+			switch key {
+			case "q", "<C-c>":
+				close(done)
+				ui.Close()
+				os.Exit(0)
+				return
+			case "r":
+				termWidth, termHeight := ui.TerminalDimensions()
 				renderMutex.Lock()
 				grid.SetRect(0, 0, termWidth, termHeight)
 				ui.Clear()
 				ui.Render(grid)
 				renderMutex.Unlock()
-
-			case ui.KeyboardEvent:
-				key := e.ID
-				fakeEvent := ui.Event{Type: ui.KeyboardEvent, ID: key}
+			case "p":
+				togglePartyMode()
+			case "c":
 				renderMutex.Lock()
-				handleProcessListEvents(fakeEvent)
+				termWidth, termHeight := ui.TerminalDimensions()
+				grid.SetRect(0, 0, termWidth, termHeight)
+				renderMutex.Unlock()
+				cycleTheme()
+				saveConfig()
+				renderMutex.Lock()
+				ui.Clear()
 				ui.Render(grid)
 				renderMutex.Unlock()
-
-				switch key {
-				case "q", "<C-c>":
-					close(done)
-					ui.Close()
-					os.Exit(0)
-					return
-				case "r":
-					termWidth, termHeight := ui.TerminalDimensions()
-					renderMutex.Lock()
-					grid.SetRect(0, 0, termWidth, termHeight)
-					ui.Clear()
-					ui.Render(grid)
-					renderMutex.Unlock()
-				case "p":
-					togglePartyMode()
-				case "c":
-					renderMutex.Lock()
-					termWidth, termHeight := ui.TerminalDimensions()
-					grid.SetRect(0, 0, termWidth, termHeight)
-					renderMutex.Unlock()
-					cycleTheme()
-					saveConfig()
-					renderMutex.Lock()
-					ui.Clear()
-					ui.Render(grid)
-					renderMutex.Unlock()
-				case "l":
-					cycleLayout()
-					saveConfig()
-					renderMutex.Lock()
-					ui.Clear()
-					ui.Render(grid)
-					renderMutex.Unlock()
-				case "h", "?":
-					toggleHelpMenu()
-				case "-", "_":
-					updateInterval -= 100
-					if updateInterval < 100 {
-						updateInterval = 100
-					}
-					updateHelpText()
-					updateModelText()
-				case "+", "=":
-					updateInterval += 100
-					if updateInterval > 5000 {
-						updateInterval = 5000
-					}
-					updateHelpText()
-					updateModelText()
+			case "l":
+				cycleLayout()
+				saveConfig()
+				renderMutex.Lock()
+				ui.Clear()
+				ui.Render(grid)
+				renderMutex.Unlock()
+			case "h", "?":
+				toggleHelpMenu()
+			case "-", "_":
+				updateInterval -= 100
+				if updateInterval < 100 {
+					updateInterval = 100
 				}
+				updateHelpText()
+				updateModelText()
+			case "+", "=":
+				updateInterval += 100
+				if updateInterval > 5000 {
+					updateInterval = 5000
+				}
+				updateHelpText()
+				updateModelText()
 			}
+
+		case ui.MouseEvent:
+			renderMutex.Lock()
+			handleProcessListEvents(e)
+			ui.Render(grid)
+			renderMutex.Unlock()
 		}
 	}
 }
@@ -1066,9 +1027,13 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 
 		_, throttled := getThermalStateString()
 
-		totalPower := m.TotalPower
-		if m.SystemPower > totalPower {
+		componentSum := m.TotalPower
+		totalPower := componentSum
+		systemResidual := 0.0
+
+		if m.SystemPower > componentSum {
 			totalPower = m.SystemPower
+			systemResidual = m.SystemPower - componentSum
 		}
 
 		cpuMetrics := CPUMetrics{
@@ -1077,6 +1042,7 @@ func collectMetrics(done chan struct{}, cpumetricsChan chan CPUMetrics, gpumetri
 			ANEW:      m.ANEPower,
 			DRAMW:     m.DRAMPower,
 			GPUSRAMW:  m.GPUSRAMPower,
+			SystemW:   systemResidual,
 			PackageW:  totalPower,
 			Throttled: throttled,
 			CPUTemp:   float64(m.CPUTemp),
@@ -1135,71 +1101,6 @@ func collectProcessMetrics(done chan struct{}, processMetricsChan chan []Process
 			time.Sleep(sleepTime)
 		}
 	}
-}
-
-func getProcessList() ([]ProcessMetrics, error) {
-	cmd := exec.Command("ps", "-c", "-Ao", "pid,user,%cpu,%mem,vsz,rss,state,time,comm")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	lines := strings.Split(string(output), "\n")
-	var processes []ProcessMetrics
-
-	if len(lines) > 0 {
-		lines = lines[1:]
-	}
-
-	for _, line := range lines {
-		if len(strings.TrimSpace(line)) == 0 {
-			continue
-		}
-
-		fields := strings.Fields(line)
-		if len(fields) < 9 {
-			continue
-		}
-
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-
-		cpu, _ := strconv.ParseFloat(fields[2], 64)
-		mem, _ := strconv.ParseFloat(fields[3], 64)
-		vsz, _ := strconv.ParseInt(fields[4], 10, 64)
-		rss, _ := strconv.ParseInt(fields[5], 10, 64)
-
-		state := fields[6]
-		timeStr := fields[7]
-		// Join all remaining fields as the command name
-		command := strings.Join(fields[8:], " ")
-
-		processes = append(processes, ProcessMetrics{
-			PID:         pid,
-			User:        fields[1],
-			CPU:         cpu,
-			Memory:      mem,
-			VSZ:         vsz,
-			RSS:         rss,
-			Command:     command,
-			State:       state,
-			Started:     "", // Removed from ps command
-			Time:        timeStr,
-			LastUpdated: time.Now(),
-		})
-	}
-
-	sort.Slice(processes, func(i, j int) bool {
-		return processes[i].CPU > processes[j].CPU
-	})
-
-	if len(processes) > 100 {
-		processes = processes[:100]
-	}
-
-	return processes, nil
 }
 
 func updateTotalPowerChart(watts float64) {
@@ -1267,12 +1168,13 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 
 	thermalStr, _ := getThermalStateString()
 
-	PowerChart.Title = fmt.Sprintf("Power Usage")
-	PowerChart.Text = fmt.Sprintf("CPU: %.2f W | GPU: %.2f W\nANE: %.2f W | DRAM: %.2f W\nTotal: %.2f W\nThermals: %s",
+	PowerChart.Title = "Power Usage"
+	PowerChart.Text = fmt.Sprintf("CPU: %.2f W | GPU: %.2f W\nANE: %.2f W | DRAM: %.2f W\nSystem: %.2f W\nTotal: %.2f W\nThermals: %s",
 		cpuMetrics.CPUW,
 		cpuMetrics.GPUW+cpuMetrics.GPUSRAMW,
 		cpuMetrics.ANEW,
 		cpuMetrics.DRAMW,
+		cpuMetrics.SystemW,
 		cpuMetrics.PackageW,
 		thermalStr,
 	)
@@ -1313,6 +1215,7 @@ func updateCPUUI(cpuMetrics CPUMetrics) {
 	powerUsage.With(prometheus.Labels{"component": "ane"}).Set(cpuMetrics.ANEW)
 	powerUsage.With(prometheus.Labels{"component": "dram"}).Set(cpuMetrics.DRAMW)
 	powerUsage.With(prometheus.Labels{"component": "gpu_sram"}).Set(cpuMetrics.GPUSRAMW)
+	powerUsage.With(prometheus.Labels{"component": "system"}).Set(cpuMetrics.SystemW)
 	powerUsage.With(prometheus.Labels{"component": "total"}).Set(cpuMetrics.PackageW)
 	socTemp.Set(cpuMetrics.CPUTemp)
 	gpuTemp.Set(cpuMetrics.GPUTemp)
