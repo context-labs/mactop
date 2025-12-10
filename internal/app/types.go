@@ -180,10 +180,11 @@ func (w *CPUCoreWidget) Draw(buf *ui.Buffer) {
 		currentX += w
 	}
 
+	fullCols := totalCores - (rows - 1) * cols
 	for i := 0; i < totalCores; i++ {
 		col := i % cols
 		row := i / cols
-		actualIndex := col*rows + row
+		actualIndex := col*rows + row - max(0, col - fullCols)
 
 		if actualIndex >= totalCores || row >= rows {
 			continue
